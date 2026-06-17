@@ -206,8 +206,8 @@ function applyOwnershipUIRestrictions() {
             if (!banner) {
                 banner = document.createElement('div');
                 banner.id = 'readonly-banner';
-                banner.style.cssText = 'background: #fef2f2; border: 1px solid #fee2e2; padding: 10px; margin-bottom: 15px; border-radius: 8px; text-align: center; color: #991b1b; font-size: 13px; font-weight: bold; width: 100%;';
-                banner.innerHTML = '🔒 وضع العرض فقط (لوحة المالك). لا تمتلك صلاحيات التعديل أو الحذف.';
+                banner.style.cssText = 'background: #fef2f2; border: 1px solid #fee2e2; padding: 1px; margin-top: 42px; border-radius: 8px; text-align: center; color: #991b1b; font-size: 11px; font-weight: bold; width: 100%;';
+                banner.innerHTML = '🔒 وضع العرض فقط . لا تمتلك صلاحيات التعديل أو الحذف.';
                 noteForm.parentNode.insertBefore(banner, noteForm);
             }
         } else {
