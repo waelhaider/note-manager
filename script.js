@@ -291,10 +291,10 @@ function showTrialBanner(daysLeft) {
     if (!trialBanner) {
         trialBanner = document.createElement('div');
         trialBanner.id = 'trial-banner-indicator';
-        trialBanner.style.cssText = 'background: #e0f2fe; border: 1px solid #bae6fd; padding: 4px; margin-top: 41px; border-radius: 8px; text-align: center; color: #0369a1; font-size: 12px; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 5px;';
+        trialBanner.style.cssText = 'background: #e0f2fe; border: 1px solid #bae6fd; padding: 4px; margin-top: 41px; border-radius: 8px; text-align: center; color: #0369a1; font-size: 10px; font-weight: bold; width: 100%; display: flex; align-items: center; justify-content: center; gap: 1px;';
         mainContainer.insertBefore(trialBanner, mainContainer.firstChild);
     }
-    trialBanner.innerHTML = `نسخة كاملة مجانية لمشاهدة العمل والبحث فيه ..<span style="color: #ef4444;"><b>${daysLeft} ( 1 أيام )</b> على انتهاء التجربة`;
+    trialBanner.innerHTML = `نسخة كاملة مجانية لمشاهدة العمل  ..<span style="color: #ef4444;"><b>(${daysLeft}  يوم )</b> على انتهاء التجربة`;
 }
 
 function showGlobalGiftBanner() {
