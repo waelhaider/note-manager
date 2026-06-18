@@ -2107,6 +2107,19 @@ function initEventListeners() {
         renderNotes();
     };
 
+    // Horizontal scrolling using Mouse Wheel on boardsNav
+    if (elements.boardsNav) {
+        elements.boardsNav.addEventListener('wheel', (e) => {
+            if (e.deltaY !== 0) {
+                e.preventDefault();
+                elements.boardsNav.scrollBy({
+                    left: e.deltaY,
+                    behavior: 'auto'
+                });
+            }
+        }, { passive: false });
+    }
+
     // Filter/Sort
     const filterBtn = document.getElementById('filter-btn');
     const sortDropdown = document.getElementById('sort-dropdown');
