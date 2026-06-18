@@ -224,15 +224,16 @@ function updateSyncBadge() {
     
     if (currentUser && isOwner && ownerEmail) {
         indicator.innerHTML = `
-            <div style="display: flex; gap: 6px; align-items: center;">
-                <span id="badge-sync-trigger" class="sync-badge synced" style="cursor: pointer; user-select: none; font-size: 10px; padding: 2px 6px;" title="انقر للمزامنة الفورية السحابية">☁️ متصل</span>
+            <div style="display: flex; gap: 6px; align-items: center; margin-right: 0px; margin-left: 5px;">
+                <span id="badge-sync-trigger" style="display: inline-block; width: 14px; height: 14px; background-color: #10b981; border: 2px solid #059669; border-radius: 50%; cursor: pointer; transition: transform 0.2s;" title="مزامنة تلقائية نشطة (أنقر للمزامنة اليدوية الإضافية)"></span>
             </div>
         `;
         const trigger = document.getElementById('badge-sync-trigger');
         if (trigger) {
             trigger.onclick = async () => {
                 try {
-                    trigger.textContent = '🔄 جاري...';
+                    trigger.style.backgroundColor = '#f59e0b'; // Amber to show syncing
+                    trigger.style.borderColor = '#d97706';
                     trigger.style.pointerEvents = 'none';
                     await uploadAllToFirestore();
                     if (googleAccessToken) {
@@ -242,7 +243,7 @@ function updateSyncBadge() {
                             console.error("Drive sync failed during header sync:", driveErr);
                         }
                     }
-                    showToast("تم مزامنة ورفع كافة البيانات سحابياً بنجاح! ☁️");
+                    showToast("تمت المزامنة وحفظ التعديلات بنجاح! ☁️");
                 } catch (err) {
                     console.error("Header sync failed:", err);
                     showToast("فشلت المزامنة المباشرة، يرجى المحاولة لاحقاً");
@@ -253,7 +254,11 @@ function updateSyncBadge() {
             };
         }
     } else if (ownerEmail && !isOwner) {
-        indicator.innerHTML = `<span class="sync-badge offline" style="background:#fee2e2; color:#991b1b; padding: 2px 6px; font-size: 10px; cursor: not-allowed;" title="أنت تتصفح نصوص المالك في وضع القراءة فقط">🔒 عرض فقط</span>`;
+        indicator.innerHTML = `
+            <div style="display: flex; gap: 6px; align-items: center; margin-right: 0px; margin-left: 5px;">
+                <span style="display: inline-block; width: 14px; height: 14px; background-color: #ef4444; border: 2px solid #dc2626; border-radius: 50%; cursor: not-allowed;" title="أنت تتصفح نصوص المالك في وضع القراءة فقط"></span>
+            </div>
+        `;
     } else {
         indicator.innerHTML = `<span id="badge-login-trigger" class="sync-badge offline" style="cursor: pointer; user-select: none; padding: 2px 6px; font-size: 10px;" title="انقر لتسجيل الدخول والمزامنة سحابياً">💾 حفظ محلي 🔑</span>`;
         const loginTrigger = document.getElementById('badge-login-trigger');
@@ -482,36 +487,11 @@ function updateAuthUI() {
             authSection.innerHTML = `
                 <div class="auth-user-info">
                     <span>مرحباً، <span class="auth-user-email">${currentUser.displayName || userMail}</span></span>
-                    <span class="auth-status-tag">👑 المالك - مزامنة السحاب نشطة</span>
                 </div>
                 <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 5px; width: 100%;">
-                    <button id="auth-force-sync-btn" class="auth-logout-btn" style="background-color: #2c3e50; color: white; border: none; font-weight: bold; width: 100%; cursor: pointer;">🔄 مزامنة ورفع كافة البيانات سحابياً</button>
                     <button id="auth-logout-btn" class="auth-logout-btn" style="width: 100%;">تسجيل الخروج</button>
                 </div>
             `;
-            
-            const forceSyncBtn = document.getElementById('auth-force-sync-btn');
-            if (forceSyncBtn) {
-                forceSyncBtn.onclick = async () => {
-                    try {
-                        forceSyncBtn.textContent = '🔄 جاري المزامنة...';
-                        forceSyncBtn.disabled = true;
-                        await uploadAllToFirestore();
-                        showToast("تم رفع ومزامنة كافة نصوصك ولوحاتك سحابياً بنجاح!");
-                        
-                        // Force update other drive systems too if possible
-                        if (googleAccessToken) {
-                            await uploadBackupToDrive(googleAccessToken, googleDriveFileId);
-                        }
-                    } catch (e) {
-                        console.error("Manual sync failed: ", e);
-                        showToast("فشلت المزامنة المباشرة، يرجى المحاولة لاحقاً");
-                    } finally {
-                        forceSyncBtn.textContent = '🔄 مزامنة ورفع كافة البيانات سحابياً';
-                        forceSyncBtn.disabled = false;
-                    }
-                };
-            }
         } else {
             authSection.innerHTML = `
                 <div class="auth-user-info">
@@ -644,10 +624,18 @@ function saveData() {
     localStorage.setItem('app_notes', JSON.stringify(notes));
     localStorage.setItem('app_trash', JSON.stringify(trash));
     
-    if (googleAccessToken && isOwner && currentUser) {
-        uploadBackupToDrive(googleAccessToken, googleDriveFileId).catch(err => {
-            console.error("Google Drive auto-backup error:", err);
+    if (isOwner && currentUser) {
+        // Automatically sync to Firestore
+        uploadAllToFirestore().catch(err => {
+            console.error("Firestore auto-sync error:", err);
         });
+        
+        // Automatically sync to Google Drive
+        if (googleAccessToken) {
+            uploadBackupToDrive(googleAccessToken, googleDriveFileId).catch(err => {
+                console.error("Google Drive auto-backup error:", err);
+            });
+        }
     }
 }
 
