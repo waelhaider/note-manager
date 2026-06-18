@@ -2088,6 +2088,21 @@ function initEventListeners() {
     document.getElementById('trash-btn').onclick = () => openModal('TRASH');
     document.getElementById('font-size-btn').onclick = () => openFontSizeModal();
 
+    // Tabs (boards-nav) scroll and touch behavior (for mobile & mouse scroll support)
+    if (elements.boardsNav) {
+        let scrollTimeout;
+        const showScrollbar = () => {
+            elements.boardsNav.classList.add('is-scrolling');
+            clearTimeout(scrollTimeout);
+            scrollTimeout = setTimeout(() => {
+                elements.boardsNav.classList.remove('is-scrolling');
+            }, 1200); // Fades out after 1.2s of no scroll activity
+        };
+        elements.boardsNav.addEventListener('scroll', showScrollbar, { passive: true });
+        elements.boardsNav.addEventListener('touchstart', showScrollbar, { passive: true });
+        elements.boardsNav.addEventListener('touchmove', showScrollbar, { passive: true });
+    }
+
     // Form
     elements.noteForm.onsubmit = (e) => {
         e.preventDefault();
@@ -2106,19 +2121,6 @@ function initEventListeners() {
         searchQuery = e.target.value;
         renderNotes();
     };
-
-    // Horizontal scrolling using Mouse Wheel on boardsNav
-    if (elements.boardsNav) {
-        elements.boardsNav.addEventListener('wheel', (e) => {
-            if (e.deltaY !== 0) {
-                e.preventDefault();
-                elements.boardsNav.scrollBy({
-                    left: e.deltaY,
-                    behavior: 'auto'
-                });
-            }
-        }, { passive: false });
-    }
 
     // Filter/Sort
     const filterBtn = document.getElementById('filter-btn');

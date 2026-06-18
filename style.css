@@ -6,6 +6,10 @@
     font-family: 'Noto Sans Arabic', sans-serif;
 }
 
+:root {
+    --header-height: 3.5rem; /* Spacious height to accommodate tabs + custom scrollbar */
+}
+
 body {
     font-family: 'Noto Sans Arabic', sans-serif;
     background-color: #f9fafb;
@@ -124,7 +128,7 @@ ease;
     display: flex;
     flex-direction: column;
     gap: 3px;
-    max-height: calc(100vh - 3rem);
+    max-height: calc(100vh - var(--header-height));
     overflow-y: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
@@ -235,7 +239,7 @@ ease;
     top: 0;
     right: 0;
     left: 0;
-    height: 3rem;
+    height: var(--header-height);
     background: #cdd5db;
     border-bottom: 1px solid #e5e7eb;
     z-index: 30;
@@ -258,49 +262,63 @@ ease;
 .boards-nav {
     flex: 1;
     overflow-x: auto;
-    overflow-y: hidden;
     display: flex;
     align-items: center;
     gap: 6px;
     height: 100%;
+    padding-top: 0px;
+    padding-bottom: 6px; /* Leave space for the custom scrollbar */
+    position: relative;
+    
+    /* Default scrollbar hidden states for Firefox and Edge */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    transition: scrollbar-color 0.3s ease;
 }
 
-/* Hide scrollbar on mobile/touch screens */
-@media (max-width: 767px) {
-    .boards-nav {
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-    }
-    .boards-nav::-webkit-scrollbar {
-        display: none;
-    }
+/* Scrollbar styling for Webkit (Chrome, Safari, Edge, Opera) */
+.boards-nav::-webkit-scrollbar {
+    height: 6px; /* Elegant, comfortable scrollbar height */
+    background-color: transparent; /* No track background by default */
 }
 
-/* Show styled visible scrollbar on desktop screens */
-@media (min-width: 768px) {
-    .boards-nav {
-        scrollbar-width: auto; /* Allow customization overrides */
-        scrollbar-color: #334155 #e2e8f0; /* Darker modern slate theme for Firefox */
-        height: 42px; /* Set a slightly shorter height so scrollbar doesn't clip below header */
-        align-self: center; /* Center vertically inside header */
-        padding-bottom: 5px; /* Leave generous space at the bottom for the scrollbar scroll line */
-    }
-    .boards-nav::-webkit-scrollbar {
-        display: block !important;
-        height: 8px !important; /* Thicker and highly visible height */
-    }
-    .boards-nav::-webkit-scrollbar-track {
-        background: #e2e8f0 !important; /* Visible light grey track background */
-        border-radius: 4px !important;
-    }
-    .boards-nav::-webkit-scrollbar-thumb {
-        background-color: #334155 !important; /* Highly visible dark slate thumb */
-        border-radius: 4px !important;
-        border: 1px solid #e2e8f0 !important; /* Outer padding touch */
-    }
-    .boards-nav::-webkit-scrollbar-thumb:hover {
-        background-color: #1e293b !important; /* Even darker shade on hover state */
-    }
+.boards-nav::-webkit-scrollbar-track {
+    background-color: transparent; /* Invisible by default */
+    border-radius: 9999px;
+}
+
+.boards-nav::-webkit-scrollbar-thumb {
+    background-color: transparent; /* Invisible by default */
+    border-radius: 9999px;
+}
+
+/* Fades in both the track (rail) and the thumb (slider) when hovering over variables, scrolling, or focusing */
+.header:hover .boards-nav::-webkit-scrollbar-track,
+.boards-nav:hover::-webkit-scrollbar-track,
+.boards-nav:focus-within::-webkit-scrollbar-track,
+.boards-nav.is-scrolling::-webkit-scrollbar-track {
+    background-color: rgba(75, 99, 130, 0.12); /* Subtle, elegant full-length rail across the tabs */
+}
+
+.header:hover .boards-nav::-webkit-scrollbar-thumb,
+.boards-nav:hover::-webkit-scrollbar-thumb,
+.boards-nav:focus-within::-webkit-scrollbar-thumb,
+.boards-nav.is-scrolling::-webkit-scrollbar-thumb {
+    background-color: rgba(75, 99, 130, 0.45); /* Clear, beautiful custom slider handle */
+}
+
+/* On hovering the scrollbar itself, make it slightly more prominent for better user control */
+.boards-nav::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(75, 99, 130, 0.7) !important;
+}
+
+/* Hover support for Firefox */
+.header:hover .boards-nav,
+.boards-nav:hover,
+.boards-nav:focus-within,
+.boards-nav.is-scrolling {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(75, 99, 130, 0.45) rgba(75, 99, 130, 0.12); /* [Thumb] [Track] */
 }
 
 .board-btn {
@@ -347,7 +365,7 @@ ease;
 
 /* Main Content */
 .main {
-    padding-top: 3rem;
+    padding-top: var(--header-height);
     padding: 0.5rem;
     max-width: 48rem;
     margin: 0 auto;
@@ -407,11 +425,11 @@ ease;
     display: flex;
     align-items: center;
     gap: 6px;
-    margin-bottom: 12px;
+    margin-bottom: 22px;
     padding: 0px 0px 0px 0px;
     background-color: #f9fafb;
     position: sticky;
-    top: 47px;
+    top: calc(var(--header-height) - 1px);
     z-index: 20;
 }
 
