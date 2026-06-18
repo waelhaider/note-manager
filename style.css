@@ -24,7 +24,9 @@ body {
     transform: translateX(-50%);
     background-color: #1f2937;
     color: white;
-    padding: 0.5rem 1rem;
+    padding: 0.4rem 0.85rem;
+    font-size: 0.82rem;
+    font-family: 'Noto Sans Arabic', sans-serif;
     border-radius: 2rem;
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
     border: 1px solid #374151;
@@ -42,7 +44,7 @@ body {
 }
 
 .toast-icon {
-    font-size: 1.25rem;
+    font-size: 1rem;
     color: #10b981;
 }
 
@@ -410,6 +412,63 @@ ease;
     border-radius: 0.5rem;
     color: #6b7280;
     cursor: pointer;
+    position: relative;
+}
+
+/* Sort Dropdown styles */
+.sort-dropdown {
+    position: absolute;
+    top: calc(100% + 5px);
+    left: 0;
+    background-color: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    z-index: 100;
+    min-width: 140px;
+    display: none;
+    flex-direction: column;
+    padding: 4px;
+    direction: rtl;
+    text-align: right;
+    font-family: 'Noto Sans Arabic', sans-serif;
+}
+
+.sort-dropdown.show {
+    display: flex;
+}
+
+.sort-dropdown-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: #334155;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: right;
+    width: 100%;
+    transition: all 0.1s;
+    font-family: inherit;
+}
+
+.sort-dropdown-item:hover {
+    background-color: #f1f5f9;
+    color: #0f172a;
+}
+
+.sort-dropdown-item.active {
+    background-color: #f0fdf4;
+    color: #166534;
+    font-weight: bold;
+}
+
+.sort-dropdown-check {
+    font-size: 11px;
+    color: #16a34a;
 }
 
 .current-board-btn {
@@ -667,20 +726,24 @@ ease;
 .modal-actions {
     display: flex;
     gap: 1rem;
-    padding: 3px 2px 0px 0px;
+    padding: 4px 2px;
     margin-top: 1.5rem;
-    justify-content: flex-end;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    flex-wrap: wrap;
 }
 
 .primary-btn {
     /*flex: 1;*/
     display: flex;
     align-items: center;
+    justify-content: center;
     background-color: #4b6382;
     color: white;
     border: none;
     font-size: 14px;
-    padding: 1px 10px 1px 10px;
+    padding: 0.5rem 1.25rem;
     border-radius: 0.5rem;
    /* font-weight: 500;*/
     cursor: pointer;
@@ -692,7 +755,7 @@ ease;
 }
 
 .secondary-btn {
-	min-width: stretch;
+    min-width: auto;
     padding: 0.5rem 1rem;
     background: none;
     border: none;

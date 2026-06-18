@@ -30,57 +30,82 @@
             <div id="auth-section" class="sidebar-auth-section">
                 <!-- Will be dynamically populated via script.js -->
             </div>
-            <div id="owner-license-manager" style="display: none; padding: 10px; border: 1px dashed #65a30d; border-radius: 8px; margin: 10px 0; background: #fdfdfc;">
-                <!-- Owner subscription panel dynamically loaded here -->
+            <!-- Owner panel with toggle chevron -->
+            <div id="owner-license-manager-container" style="display: none; margin: 10px 0;">
+                <div id="owner-panel-toggle" style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: #e2e8f0; border: 1px solid #cbd5e1; border-radius: 8px; cursor: pointer; user-select: none;">
+                    <h3 style="font-size: 12.5px; font-weight: bold; color: #1e293b; margin: 0; display: flex; align-items: center; gap: 6px; font-family: 'Noto Sans Arabic', sans-serif;">
+                        <span>📋</span> لوحة المالك لتفعيل المشتركين
+                    </h3>
+                    <span id="owner-panel-chevron" style="font-size: 10px; color: #64748b; transition: transform 0.2s; display: inline-block;">▼</span>
+                </div>
+                <div id="owner-license-manager" style="display: none; padding: 12px 10px; border: 1px solid #cbd5e1; border-top: none; border-bottom-left-radius: 8px; border-bottom-right-radius: 8px; background: #fdfdfc;">
+                    <!-- Owner subscription panel dynamically loaded here -->
+                </div>
             </div>
             <div class="sidebar-divider"></div>
 
-            <button id="add-board-btn" class="sidebar-btn">
-                <span>+</span>
-                <span>إضافة لوحة</span>
-            </button>
-            <button id="reorder-boards-btn" class="sidebar-btn">
-                <span>↻</span>
-                <span>ترتيب اللوحات</span>
-            </button>
-            <div class="sidebar-divider"></div>
-            <h3 id="boards-toggle" class="boards-toggle">
+            <h3 id="boards-toggle" class="boards-toggle" style="font-family: 'Noto Sans Arabic', sans-serif;">
                 إدارة اللوحات
-                <span id="boards-chevron">▼</span>
+                <span id="boards-chevron">▶</span>
             </h3>
-            <div id="boards-list" class="boards-list">
-                <!-- Boards will be populated here -->
+            <div id="boards-section-content" style="display: none;">
+                <!-- Add Board & Reorder Boards grouped together inside Board Management -->
+                <div style="display: flex; gap: 6px; margin: 8px 4px; direction: rtl;">
+                    <button id="add-board-btn" class="sidebar-btn" style="flex: 1; margin: 0; padding: 6px 8px; font-size: 11.5px; border-radius: 6px; justify-content: center; display: flex; align-items: center; gap: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                        <span style="font-size: 14px; font-weight: bold;">+</span>
+                        <span>إضافة لوحة</span>
+                    </button>
+                    <button id="reorder-boards-btn" class="sidebar-btn" style="flex: 1; margin: 0; padding: 6px 8px; font-size: 11.5px; border-radius: 6px; justify-content: center; display: flex; align-items: center; gap: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                        <span style="font-size: 11px; font-weight: bold;">↻</span>
+                        <span>ترتيب اللوحات</span>
+                    </button>
+                </div>
+                <div id="boards-list" class="boards-list">
+                    <!-- Boards will be populated here -->
+                </div>
             </div>
+
             <div class="sidebar-divider"></div>
-            <button id="export-btn" class="sidebar-btn">
-                <span>↑</span>
-                <span>تصدير نسخة كاملة</span>
-            </button>
-            <button id="export-board-btn" class="sidebar-btn">
-                <span>↑</span>
-                <span>تصدير لوحة</span>
-            </button>
-            <button id="import-btn" class="sidebar-btn">
-                <span>↓</span>
-                <span>استيراد نسخة كاملة</span>
-            </button>
-            <button id="import-board-btn" class="sidebar-btn">
-                <span>↓</span>
-                <span>استيراد لوحة</span>
-            </button>
-            <input type="file" id="import-file" hidden accept=".json">
-            <input type="file" id="import-board-file" hidden accept=".json">
-            <button id="import-text-btn" class="sidebar-btn">
-                <span>↓</span>
-                <span>استيراد نص</span>
-            </button>
-            <input type="file" id="import-text-file" hidden accept=".txt">
-            <button id="trash-btn" class="sidebar-btn trash-btn">
+
+            <!-- Export & Import Container -->
+            <h3 id="export-import-toggle" class="boards-toggle" style="font-family: 'Noto Sans Arabic', sans-serif;">
+                تصدير واستيراد
+                <span id="export-import-chevron">▶</span>
+            </h3>
+            <div id="export-import-section-content" style="display: none; padding: 4px 6px;">
+                <button id="export-btn" class="sidebar-btn" style="width: 100%; justify-content: flex-start; margin-bottom: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                    <span>↑</span>
+                    <span>تصدير نسخة كاملة</span>
+                </button>
+                <button id="export-board-btn" class="sidebar-btn" style="width: 100%; justify-content: flex-start; margin-bottom: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                    <span>↑</span>
+                    <span>تصدير لوحة</span>
+                </button>
+                <button id="import-btn" class="sidebar-btn" style="width: 100%; justify-content: flex-start; margin-bottom: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                    <span>↓</span>
+                    <span>استيراد نسخة كاملة</span>
+                </button>
+                <button id="import-board-btn" class="sidebar-btn" style="width: 100%; justify-content: flex-start; margin-bottom: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                    <span>↓</span>
+                    <span>استيراد لوحة</span>
+                </button>
+                <input type="file" id="import-file" hidden accept=".json">
+                <input type="file" id="import-board-file" hidden accept=".json">
+                <button id="import-text-btn" class="sidebar-btn" style="width: 100%; justify-content: flex-start; margin-bottom: 4px; font-family: 'Noto Sans Arabic', sans-serif;">
+                    <span>↓</span>
+                    <span>استيراد نص</span>
+                </button>
+                <input type="file" id="import-text-file" hidden accept=".txt">
+            </div>
+
+            <div class="sidebar-divider"></div>
+
+            <button id="trash-btn" class="sidebar-btn trash-btn" style="font-family: 'Noto Sans Arabic', sans-serif;">
                 <span>🗑</span>
                 <span>المحذوفات</span>
             </button>
 
-            <button id="font-size-btn" class="sidebar-btn">
+            <button id="font-size-btn" class="sidebar-btn" style="margin-top: auto; margin-bottom: 15px; font-family: 'Noto Sans Arabic', sans-serif;">
                 <span>🔤</span>
                 <span>حجم النصوص</span>
             </button>
@@ -111,7 +136,23 @@
                 <span>🔍</span>
                 <input id="search-input" type="text" placeholder="بحث في الملاحظات...">
             </div>
-            <button class="filter-btn">⚙</button>
+            <div style="position: relative; display: inline-block;">
+                <button class="filter-btn" id="filter-btn">⚙</button>
+                <div id="sort-dropdown" class="sort-dropdown">
+                    <button class="sort-dropdown-item" data-sort="timestamp-desc">
+                        <span>الأحدث أولاً</span>
+                        <span class="sort-dropdown-check" id="check-timestamp-desc">✓</span>
+                    </button>
+                    <button class="sort-dropdown-item" data-sort="timestamp-asc">
+                        <span>الأقدم أولاً</span>
+                        <span class="sort-dropdown-check" id="check-timestamp-asc">✓</span>
+                    </button>
+                    <button class="sort-dropdown-item" data-sort="content-asc">
+                        <span>أبجدي</span>
+                        <span class="sort-dropdown-check" id="check-content-asc">✓</span>
+                    </button>
+                </div>
+            </div>
         </div>
 
         <!-- Notes List -->
@@ -166,7 +207,9 @@
             <div id="reorder-list" class="reorder-list">
                 <!-- Boards for reordering -->
             </div>
-            <button id="close-reorder" class="primary-btn">حفظ وإغلاق</button>
+            <div class="modal-actions">
+                <button id="close-reorder" class="primary-btn">حفظ وإغلاق</button>
+            </div>
         </div>
     </div>
 
@@ -191,7 +234,9 @@
             <div id="move-options" class="move-options">
                 <!-- Board options -->
             </div>
-            <button id="cancel-move" class="secondary-btn">إلغاء</button>
+            <div class="modal-actions">
+                <button id="cancel-move" class="secondary-btn">إلغاء</button>
+            </div>
         </div>
     </div>
 
@@ -274,7 +319,7 @@
         <div class="modal-content" style="max-width: 22rem; position: relative; top: auto;">
             <h3 id="custom-confirm-title" style="margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">تأكيد الإجراء</h3>
             <p id="custom-confirm-message" style="margin-bottom: 20px; font-size: 13px; color: #4b5563; line-height: 1.6; text-align: right;"></p>
-            <div class="modal-actions" style="margin-top: 1rem; display: flex; justify-content: flex-end; gap: 10px; width: 100%;">
+            <div class="modal-actions" style="margin-top: 1rem; display: flex; justify-content: center; gap: 10px; width: 100%;">
                 <button id="custom-confirm-cancel" class="secondary-btn" style="min-width: auto; padding: 0.4rem 1rem; background-color: #e5e7eb; color: #4b5563; border-radius: 0.5rem; font-size: 13px; font-weight: bold; cursor: pointer; border: 1px solid #d1d5db;">إلغاء</button>
                 <button id="custom-confirm-ok" class="primary-btn" style="min-width: auto; padding: 0.4rem 1.2rem; border-radius: 0.5rem; font-size: 13px; font-weight: bold; background-color: #dc2626; color: white;">تأكيد</button>
             </div>
@@ -287,7 +332,7 @@
             <h3 id="custom-prompt-title" style="margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">إدخال مطلوب</h3>
             <p id="custom-prompt-message" style="margin-bottom: 10px; font-size: 13px; color: #4b5563; line-height: 1.6; text-align: right;"></p>
             <input type="text" id="custom-prompt-input" style="width: 100%; padding: 8px 12px; border: 1px solid #9ca3af; border-radius: 8px; margin-bottom: 15px; font-size: 14px; outline: none; background: white; color: #111827;" placeholder="اكتب هنا...">
-            <div class="modal-actions" style="margin-top: 1rem; display: flex; justify-content: flex-end; gap: 10px; width: 100%;">
+            <div class="modal-actions" style="margin-top: 1rem; display: flex; justify-content: center; gap: 10px; width: 100%;">
                 <button id="custom-prompt-cancel" class="secondary-btn" style="min-width: auto; padding: 0.4rem 1rem; background-color: #e5e7eb; color: #4b5563; border-radius: 0.5rem; font-size: 13px; font-weight: bold; cursor: pointer; border: 1px solid #d1d5db;">إلغاء</button>
                 <button id="custom-prompt-ok" class="primary-btn" style="min-width: auto; padding: 0.4rem 1.2rem; border-radius: 0.5rem; font-size: 13px; font-weight: bold; background-color: #4b6382; color: white;">تأكيد</button>
             </div>

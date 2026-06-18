@@ -23,6 +23,8 @@ let googleDriveFileId = null;
 let isAllFree = false;          // True if owner opens the entire app for everyone (gift option)
 let currentUserLicense = null;  // Holds license details {email, activated, activationCode, trialStartDate}
 let isUserPremium = false;      // True if the user has premium access (active trial, active license, or owner)
+let trialDaysSetting = 7;       // Default trial duration in days (can be changed by owner)
+let isOwnerPanelOpen = false;   // Owner license manager collapsible toggle state
 
 // Firebase & Drive Helper Functions
 async function firestoreWriteNote(note) {
@@ -313,14 +315,21 @@ async function checkLicenseAndAccess() {
     isAllFree = false;
     currentUserLicense = null;
     isUserPremium = false;
+    trialDaysSetting = 7; // Reset to default
     
-    // 1. Get global settings to evaluate allFree
+    // 1. Get global settings to evaluate allFree and custom trial days
     try {
         const globalRef = doc(db, "settings", "global");
         const docSnap = await getDoc(globalRef);
         if (docSnap.exists()) {
             const data = docSnap.data();
             isAllFree = !!data.allFree;
+            if (data.trialDays !== undefined && data.trialDays !== null) {
+                const parsedDays = parseInt(data.trialDays, 10);
+                if (!isNaN(parsedDays) && parsedDays > 0) {
+                    trialDaysSetting = parsedDays;
+                }
+            }
         }
     } catch (e) {
         console.error("Failed to read global free access mode:", e);
@@ -343,8 +352,13 @@ async function checkLicenseAndAccess() {
             const licenseDoc = await getDoc(licenseRef);
             if (licenseDoc.exists()) {
                 currentUserLicense = licenseDoc.data();
+                // If the license exists (e.g. pre-assigned by the owner) but has no trial start date yet, initialize it today
+                if (!currentUserLicense.trialStartDate && !currentUserLicense.activated) {
+                    currentUserLicense.trialStartDate = Date.now();
+                    await setDoc(licenseRef, currentUserLicense, { merge: true });
+                }
             } else {
-                // First login, start 7-day trial
+                // First login, start trial
                 const trialStart = Date.now();
                 currentUserLicense = {
                     email: normalizedEmail,
@@ -360,7 +374,7 @@ async function checkLicenseAndAccess() {
                 isUserPremium = true;
             } else if (currentUserLicense.trialStartDate) {
                 const elapsed = Date.now() - currentUserLicense.trialStartDate;
-                const trialDuration = 7 * 24 * 60 * 60 * 1000; // 7 days
+                const trialDuration = trialDaysSetting * 24 * 60 * 60 * 1000;
                 if (elapsed < trialDuration) {
                     isUserPremium = true;
                     const daysLeft = Math.max(1, Math.ceil((trialDuration - elapsed) / (24 * 60 * 60 * 1000)));
@@ -381,15 +395,35 @@ async function checkLicenseAndAccess() {
 }
 
 async function renderOwnerLicenseManager() {
+    const container = document.getElementById('owner-license-manager-container');
     const parent = document.getElementById('owner-license-manager');
-    if (!parent) return;
+    if (!container || !parent) return;
 
     if (!isOwner || !currentUser) {
-        parent.style.display = 'none';
+        container.style.display = 'none';
         return;
     }
 
-    parent.style.display = 'block';
+    container.style.display = 'block';
+
+    // Manage inner display and chevron based on isOwnerPanelOpen
+    const chev = document.getElementById('owner-panel-chevron');
+    parent.style.display = isOwnerPanelOpen ? 'block' : 'none';
+    if (chev) {
+        chev.style.transform = isOwnerPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+    }
+
+    // Set toggle click handler
+    const toggleBtn = document.getElementById('owner-panel-toggle');
+    if (toggleBtn) {
+        toggleBtn.onclick = () => {
+            isOwnerPanelOpen = !isOwnerPanelOpen;
+            parent.style.display = isOwnerPanelOpen ? 'block' : 'none';
+            if (chev) {
+                chev.style.transform = isOwnerPanelOpen ? 'rotate(180deg)' : 'rotate(0deg)';
+            }
+        };
+    }
     
     // Fetch licenses list from Firestore
     let licensesList = [];
@@ -403,12 +437,20 @@ async function renderOwnerLicenseManager() {
     }
 
     parent.innerHTML = `
-        <h4 style="font-size: 13px; font-weight: bold; color: #65a30d; margin-bottom: 6px; direction: rtl; text-align: right;">📋 لوحة المالك لتفعيل المشتركين</h4>
-        
         <!-- Toggle global free gift status -->
         <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 12px; direction: rtl; font-size: 11.5px;">
             <input type="checkbox" id="all-free-toggle" ${isAllFree ? 'checked' : ''} style="cursor: pointer; width: 14px; height: 14px; accent-color: #65a30d;">
-            <label for="all-free-toggle" style="cursor: pointer; color: #3f6212; font-weight: bold;">🎁 فتح العمل كلياً ومجاناً للجميع كهدية</label>
+            <label for="all-free-toggle" style="cursor: pointer; color: #3f6212; font-weight: bold;">🎁فتح العمل مجاناً للجميع كهدية</label>
+        </div>
+
+        <!-- Trial Days Config -->
+        <div style="background: #f4f4f3; border-radius: 6px; padding: 6px; margin-bottom: 10px; direction: rtl;">
+            <p style="font-size: 11px; font-weight: bold; margin-bottom: 4px; color: #1e293b;">مدة الفترة التجريبية:</p>
+            <div style="display: flex; gap: 4px; align-items: center;">
+                <input type="number" id="trial-days-input" value="${trialDaysSetting}" min="1" max="365" style="width: 55px; padding: 2px 4px; font-size: 11px; border: 1px solid #cbd5e1; border-radius: 4px; text-align: center;">
+                <span style="font-size: 11px; color: #475569; font-weight: bold;">يوم</span>
+                <button id="save-trial-days-btn" style="background: #0284c7; color: white; border: none; padding: 3px 6px; font-size: 10.5px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-right: auto;">حفظ الأيام</button>
+            </div>
         </div>
 
         <!-- Add Subscriber form -->
@@ -433,7 +475,7 @@ async function renderOwnerLicenseManager() {
                         statusColor = '#16a34a';
                     } else if (lic.trialStartDate) {
                         const elapsed = Date.now() - lic.trialStartDate;
-                        const daysLeft = Math.max(0, Math.ceil((7 * 24 * 60 * 60 * 1000 - elapsed) / (24 * 60 * 60 * 1000)));
+                        const daysLeft = Math.max(0, Math.ceil((trialDaysSetting * 24 * 60 * 60 * 1000 - elapsed) / (24 * 60 * 60 * 1000)));
                         if (daysLeft > 0) {
                             statusLabel = `تجريبي (${daysLeft} يوم)`;
                             statusColor = '#0284c7';
@@ -463,6 +505,37 @@ async function renderOwnerLicenseManager() {
     `;
 
     // Hook listeners
+    const saveTrialDaysBtn = document.getElementById('save-trial-days-btn');
+    if (saveTrialDaysBtn) {
+        saveTrialDaysBtn.onclick = async () => {
+            const input = document.getElementById('trial-days-input');
+            const newDays = parseInt(input.value, 10);
+            if (isNaN(newDays) || newDays < 1) {
+                showToast("يرجى إدخال عدد أيام صحيح (أكبر من 0)");
+                return;
+            }
+            saveTrialDaysBtn.disabled = true;
+            saveTrialDaysBtn.textContent = "...";
+            try {
+                const globalRef = doc(db, "settings", "global");
+                await setDoc(globalRef, {
+                    trialDays: newDays,
+                    lastSync: Date.now()
+                }, { merge: true });
+                trialDaysSetting = newDays;
+                showToast(`🎉 تم تعديل الفترة التجريبية بنجاح لتكون ${newDays} يوماً!`);
+                await checkLicenseAndAccess();
+                await renderOwnerLicenseManager();
+            } catch (e) {
+                console.error("Failed to save trial days:", e);
+                showToast("حدث خطأ أثناء حفظ الإعدادات سحابياً.");
+            } finally {
+                saveTrialDaysBtn.disabled = false;
+                saveTrialDaysBtn.textContent = "حفظ الأيام";
+            }
+        };
+    }
+
     const giftToggle = document.getElementById('all-free-toggle');
     if (giftToggle) {
         giftToggle.onchange = async () => {
@@ -769,7 +842,9 @@ function updateAuthUI() {
             authSection.innerHTML = `
                 <div class="auth-user-info">
                     <span>مرحباً، <span class="auth-user-email">${currentUser.displayName || userMail}</span></span>
-                    <span class="auth-status-tag readonly">👁️ قارئ (المالك: ${mailOwner})</span>
+                    <a href="mailto:${mailOwner || 'alwaelai2000@gmail.com'}" style="display: inline-flex; align-items: center; justify-content: center; gap: 4px; margin-top: 4px; padding: 4px 8px; border-radius: 6px; background-color: #f0fdf4; color: #166534; text-decoration: none; font-size: 11px; font-weight: bold; border: 1px solid #bbf7d0; transition: all 0.2s; direction: ltr;" onmouseover="this.style.backgroundColor='#dcfce7'" onmouseout="this.style.backgroundColor='#f0fdf4'">
+                        📧 للتواصل: ${mailOwner || 'alwaelai2000@gmail.com'}
+                    </a>
                 </div>
                 <button id="auth-logout-btn" class="auth-logout-btn" style="margin-top:2px;">تسجيل الخروج</button>
             `;
@@ -811,6 +886,7 @@ let searchQuery = '';
 let sortOrder = 'timestamp-desc'; // timestamp-desc, timestamp-asc, content-asc
 let isSidebarOpen = false;
 let isBoardsExpanded = false;
+let isExportImportExpanded = false;
 let expandedNoteIds = new Set(); // For text expansion
 let openMenuId = null; // For menu and highlight
 let fontSize = 14; // Default font size in px
@@ -1166,23 +1242,23 @@ function renderNotes() {
         elements.notesList.innerHTML = '';
         
         const lockContainer = document.createElement('div');
-        lockContainer.style.cssText = 'display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 40px 20px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; margin-top: 15px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); max-width: 500px; margin-left: auto; margin-right: auto; transition: all 0.3s;';
+        lockContainer.style.cssText = 'display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; margin-top: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.04); max-width: 450px; margin-left: auto; margin-right: auto; transition: all 0.3s;';
         
         lockContainer.innerHTML = `
-            <div style="font-size: 42px; margin-bottom: 16px;">🔒</div>
-            <h3 style="font-size: 20px; font-weight: bold; color: #1e293b; margin-bottom: 12px; font-family: 'Noto Sans Arabic', sans-serif;">محتوى متميز (النسخة الكاملة)</h3>
-            <p style="font-size: 14px; color: #475569; line-height: 1.7; margin-bottom: 24px; text-align: justify; direction: rtl; font-family: 'Noto Sans Arabic', sans-serif; padding: 0 10px;">
+            <div style="font-size: 32px; margin-bottom: 8px;">🔒</div>
+            <h3 style="font-size: 16.5px; font-weight: bold; color: #1e293b; margin-bottom: 8px; font-family: 'Noto Sans Arabic', sans-serif;">محتوى متميز (النسخة الكاملة)</h3>
+            <p style="font-size: 13px; color: #475569; line-height: 1.6; margin-bottom: 14px; text-align: center; direction: rtl; font-family: 'Noto Sans Arabic', sans-serif; padding: 0 5px;">
                 هذا التبويب يحتوي على نصوص متميزة منتقاة تمثل سنوات من القراءة والبحث العلمي والأكاديمي والتحقيق الدقيق. لمواصلة القراءة والاطلاع والبحث، يرجى تفعيل النسخة الكاملة أو الاشتراك بحساب متميز.
             </p>
         `;
         
         if (!currentUser) {
             lockContainer.innerHTML += `
-                <div style="width: 100%; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-                    <p style="font-size: 13px; color: #64748b; margin-bottom: 16px; font-weight: 500;">
+                <div style="width: 100%; border-top: 1px solid #f1f5f9; padding-top: 12px;">
+                    <p style="font-size: 12px; color: #64748b; margin-bottom: 12px; font-weight: 500;">
                         سجل دخولك الآن لتبدأ فوراً فترة تجريبية مجانية كاملة مدتها 7 أيام:
                     </p>
-                    <button id="lock-login-btn" class="primary-btn" style="width: 100%; padding: 12px; font-size: 14px; font-weight: bold; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                    <button id="lock-login-btn" class="primary-btn" style="width: 100%; padding: 10px; font-size: 13.5px; font-weight: bold; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
                         🔑 تسجيل الدخول بالبريد الإلكتروني
                     </button>
                 </div>
@@ -1197,21 +1273,21 @@ function renderNotes() {
             }
         } else {
             lockContainer.innerHTML += `
-                <div style="width: 100%; border-top: 1px solid #f1f5f9; padding-top: 16px;">
-                    <p style="font-size: 13px; color: #475569; margin-bottom: 14px; line-height: 1.5;">
+                <div style="width: 100%; border-top: 1px solid #f1f5f9; padding-top: 12px;">
+                    <p style="font-size: 12.5px; color: #475569; margin-bottom: 10px; line-height: 1.4;">
                         الحساب الحالي: <span style="font-weight: bold; color: #0284c7;">${currentUser.email}</span>
                         <br/>
-                        <span style="color: #ef4444; font-weight: bold; display: inline-block; margin-top: 6px;">🚫 انتهت الفترة التجريبية المجانية للنسخة الكاملة</span>
+                        <span style="color: #ef4444; font-weight: bold; display: inline-block; margin-top: 4px;">🚫 انتهت الفترة التجريبية المجانية للنسخة الكاملة</span>
                     </p>
-                    <div style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                    <div style="display: flex; flex-direction: column; gap: 8px; width: 100%;">
                         <input id="activation-code" type="text" placeholder="أدخل كود التفعيل المخصص لبريدك الإلكتروني..." 
-                               style="width: 100%; padding: 12px; border: 1.5px solid #cbd5e1; border-radius: 8px; text-align: center; font-size: 14px; font-weight: bold; letter-spacing: 1.5px; outline: none; transition: border-color 0.2s;"
+                               style="width: 100%; padding: 10px; border: 1.5px solid #cbd5e1; border-radius: 8px; text-align: center; font-size: 13.5px; font-weight: bold; letter-spacing: 1px; outline: none; transition: border-color 0.2s;"
                                onfocus="this.style.borderColor='#10b981'" onblur="this.style.borderColor='#cbd5e1'">
-                        <button id="activate-now-btn" class="primary-btn" style="width: 100%; padding: 12px; font-size: 14.5px; font-weight: bold; border-radius: 8px; background-color: #10b981; border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: opacity 0.2s;">
+                        <button id="activate-now-btn" class="primary-btn" style="width: 100%; padding: 10px; font-size: 13.5px; font-weight: bold; border-radius: 8px; background-color: #10b981; border: none; color: white; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; transition: opacity 0.2s;">
                             🚀 تفعيل النسخة الكاملة الآن
                         </button>
                     </div>
-                    <p style="font-size: 11.5px; color: #94a3b8; margin-top: 12px; direction: rtl; line-height: 1.4;">
+                    <p style="font-size: 11px; color: #94a3b8; margin-top: 8px; direction: rtl; line-height: 1.3;">
                         * يرجى إرسال بريدك الإلكتروني للمالك للحصول على كود التنشيط الخاص بك حصراً.
                     </p>
                 </div>
@@ -1744,7 +1820,7 @@ function handleEditSave() {
     showToast('تم التحديث');
 }
 
-function handleExport() {
+async function handleExport() {
     const data = JSON.stringify({ boards, notes, trash }, null, 2);
     const blob = new Blob([data], { type: 'application/json' });
     const filename = `manager-backup-${new Date().toISOString().slice(0,10)}.json`;
@@ -1763,19 +1839,17 @@ function handleExport() {
 
     if ('showSaveFilePicker' in window) {
         try {
-            const handle = window.showSaveFilePicker({
+            const handle = await window.showSaveFilePicker({
                 suggestedName: filename,
                 types: [{
                     description: 'JSON Backup File',
                     accept: { 'application/json': ['.json'] },
                 }],
-            }).then(handle => {
-                return handle.createWritable();
-            }).then(writable => {
-                writable.write(blob);
-                writable.close();
-                showToast('تم حفظ النسخة بنجاح');
             });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+            showToast('تم حفظ النسخة بنجاح');
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.warn("showSaveFilePicker failed, using fallback", err);
@@ -1783,12 +1857,12 @@ function handleExport() {
             }
         }
     } else {
-        showCustomAlert('متصفحك لا يدعم نافذة اختيار مكان الحفظ، سيتم التنزيل في المجلد الافتراضي للمتصفح.');
+        showCustomAlert('متصفحك لا يدعم اختيار مكان الحفظ المباشر، سيتم التنزيل في المجلد الافتراضي.');
         downloadFallback();
     }
 }
 
-function handleExportBoard() {
+async function handleExportBoard() {
     const activeBoard = boards.find(b => b.id === activeBoardId);
     if (!activeBoard) return;
 
@@ -1810,19 +1884,17 @@ function handleExportBoard() {
 
     if ('showSaveFilePicker' in window) {
         try {
-            const handle = window.showSaveFilePicker({
+            const handle = await window.showSaveFilePicker({
                 suggestedName: filename,
                 types: [{
                     description: 'Board Backup File',
                     accept: { 'application/json': ['.json'] },
                 }],
-            }).then(handle => {
-                return handle.createWritable();
-            }).then(writable => {
-                writable.write(new Blob([data], { type: 'application/json' }));
-                writable.close();
-                showToast('تم حفظ اللوحة بنجاح');
             });
+            const writable = await handle.createWritable();
+            await writable.write(new Blob([data], { type: 'application/json' }));
+            await writable.close();
+            showToast('تم حفظ اللوحة بنجاح');
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.warn("showSaveFilePicker failed, using fallback", err);
@@ -1995,7 +2067,14 @@ function initEventListeners() {
     document.getElementById('boards-toggle').onclick = () => {
         isBoardsExpanded = !isBoardsExpanded;
         document.getElementById('boards-chevron').textContent = isBoardsExpanded ? '▼' : '▶';
-        elements.boardsList.style.display = isBoardsExpanded ? 'block' : 'none';
+        document.getElementById('boards-section-content').style.display = isBoardsExpanded ? 'block' : 'none';
+    };
+
+    // Export & Import toggle
+    document.getElementById('export-import-toggle').onclick = () => {
+        isExportImportExpanded = !isExportImportExpanded;
+        document.getElementById('export-import-chevron').textContent = isExportImportExpanded ? '▼' : '▶';
+        document.getElementById('export-import-section-content').style.display = isExportImportExpanded ? 'block' : 'none';
     };
 
     // Sidebar buttons
@@ -2029,17 +2108,63 @@ function initEventListeners() {
     };
 
     // Filter/Sort
-    document.querySelector('.filter-btn').onclick = () => {
-        if (sortOrder === 'timestamp-desc') {
-            sortOrder = 'timestamp-asc';
-        } else if (sortOrder === 'timestamp-asc') {
-            sortOrder = 'content-asc';
-        } else {
-            sortOrder = 'timestamp-desc';
-        }
-        renderNotes();
-        showToast(`تم الترتيب: ${sortOrder === 'timestamp-desc' ? 'الأحدث أولاً' : sortOrder === 'timestamp-asc' ? 'الأقدم أولاً' : 'أبجدي'}`);
+    const filterBtn = document.getElementById('filter-btn');
+    const sortDropdown = document.getElementById('sort-dropdown');
+
+    const updateSortDropdownUI = () => {
+        document.querySelectorAll('.sort-dropdown-item').forEach(item => {
+            const itemSort = item.getAttribute('data-sort');
+            if (itemSort === sortOrder) {
+                item.classList.add('active');
+            } else {
+                item.classList.remove('active');
+            }
+        });
+
+        const checkDesc = document.getElementById('check-timestamp-desc');
+        const checkAsc = document.getElementById('check-timestamp-asc');
+        const checkAlpha = document.getElementById('check-content-asc');
+        
+        if (checkDesc) checkDesc.style.display = sortOrder === 'timestamp-desc' ? 'inline' : 'none';
+        if (checkAsc) checkAsc.style.display = sortOrder === 'timestamp-asc' ? 'inline' : 'none';
+        if (checkAlpha) checkAlpha.style.display = sortOrder === 'content-asc' ? 'inline' : 'none';
     };
+
+    if (filterBtn && sortDropdown) {
+        filterBtn.onclick = (e) => {
+            e.stopPropagation();
+            const isOpen = sortDropdown.classList.contains('show');
+            if (isOpen) {
+                sortDropdown.classList.remove('show');
+            } else {
+                updateSortDropdownUI();
+                sortDropdown.classList.add('show');
+            }
+        };
+
+        document.querySelectorAll('.sort-dropdown-item').forEach(item => {
+            item.onclick = (e) => {
+                e.stopPropagation();
+                const newSort = item.getAttribute('data-sort');
+                sortOrder = newSort;
+                renderNotes();
+                
+                let sortString = '';
+                if (sortOrder === 'timestamp-desc') sortString = 'الأحدث أولاً';
+                else if (sortOrder === 'timestamp-asc') sortString = 'الأقدم أولاً';
+                else if (sortOrder === 'content-asc') sortString = 'أبجدي';
+
+                showToast(`تم الترتيب: ${sortString}`);
+                sortDropdown.classList.remove('show');
+            };
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!filterBtn.contains(e.target) && !sortDropdown.contains(e.target)) {
+                sortDropdown.classList.remove('show');
+            }
+        });
+    }
 
     // Modals
     elements.boardForm.onsubmit = handleBoardSubmit;
@@ -2211,9 +2336,12 @@ function init() {
     renderBoardsList();
     renderNotes();
     initEventListeners();
-    // Set initial state for boards list
-    elements.boardsList.style.display = isBoardsExpanded ? 'block' : 'none';
+    // Set initial state for boards list and collapsible sections
+    document.getElementById('boards-section-content').style.display = isBoardsExpanded ? 'block' : 'none';
     document.getElementById('boards-chevron').textContent = isBoardsExpanded ? '▼' : '▶';
+
+    document.getElementById('export-import-section-content').style.display = isExportImportExpanded ? 'block' : 'none';
+    document.getElementById('export-import-chevron').textContent = isExportImportExpanded ? '▼' : '▶';
     initBackToTop();
     updateFontSize(); // Apply font size
 
