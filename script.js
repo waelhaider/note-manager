@@ -262,7 +262,7 @@ function updateSyncBadge() {
         }
     } else if (ownerEmail && !isOwner) {
         indicator.innerHTML = `
-            <div style="display: flex; gap: 6px; align-items: center; margin-right: 0px; margin-left: 5px;">
+            <div style="display: flex; gap: 6px; align-items: center; margin-right: -10px; margin-left: 5px;">
                 <span style="display: inline-block; width: 14px; height: 14px; background-color: #ef4444; border: 2px solid #dc2626; border-radius: 50%; cursor: not-allowed;" title="أنت تتصفح نصوص المالك في وضع القراءة فقط"></span>
             </div>
         `;
