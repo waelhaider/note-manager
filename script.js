@@ -1348,6 +1348,7 @@ function renderNotes() {
 
     filteredNotes.forEach(note => {
         const item = document.createElement('div');
+        item.id = `note-${note.id}`;
         item.className = `note-item ${expandedNoteIds.has(note.id) ? 'active' : ''} ${note.id === openMenuId ? 'menu-open' : ''}`;
 
         const content = document.createElement('div');
@@ -1630,9 +1631,108 @@ function renderMoveModal(note) {
     });
 }
 
+// Helper functions for duplicate text detection (checking same or close texts)
+function normalizeTextForComparison(str) {
+    if (!str) return '';
+    let cleaned = str.toLowerCase();
+    // Remove Arabic diacritics/vocalizations (Harakat)
+    cleaned = cleaned.replace(/[\u064B-\u0652\u0670]/g, '');
+    // Remove Arabic tatweel (kashida)
+    cleaned = cleaned.replace(/ـ/g, '');
+    // Normalize similar looking letters
+    cleaned = cleaned.replace(/[أإآ]/g, 'ا');
+    cleaned = cleaned.replace(/ة/g, 'ه');
+    cleaned = cleaned.replace(/ى/g, 'ي');
+    // Remove punctuation, extra symbols, dots, etc.
+    cleaned = cleaned.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?"'،؛؟\\|]/g, '');
+    // Strip all whitespaces out for density comparison
+    cleaned = cleaned.replace(/\s+/g, '').trim();
+    return cleaned;
+}
+
+function getLevenshteinDistance(a, b) {
+    const tmp = [];
+    let i, j;
+    for (i = 0; i <= a.length; i++) {
+        tmp[i] = [i];
+    }
+    for (j = 0; j <= b.length; j++) {
+        tmp[0][j] = j;
+    }
+    for (i = 1; i <= a.length; i++) {
+        for (j = 1; j <= b.length; j++) {
+            tmp[i][j] = Math.min(
+                tmp[i - 1][j] + 1,
+                tmp[i][j - 1] + 1,
+                tmp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+            );
+        }
+    }
+    return tmp[a.length][b.length];
+}
+
+function areTextsClose(str1, str2) {
+    const s1 = str1.trim();
+    const s2 = str2.trim();
+    if (s1 === s2) return true;
+    
+    const norm1 = normalizeTextForComparison(s1);
+    const norm2 = normalizeTextForComparison(s2);
+    
+    // If they normalize to the same thing, they are close
+    if (norm1 === norm2) return true;
+    
+    // If one is too short, only exact/direct normalized match counts
+    if (norm1.length < 6 || norm2.length < 6) {
+        return norm1 === norm2;
+    }
+    
+    // Calculate Levenshtein distance on normalized text to allow minor differences
+    const distance = getLevenshteinDistance(norm1, norm2);
+    
+    // Allow small edit distance (up to 2 character changes, or 10% of length, whichever is smaller)
+    const threshold = Math.max(1, Math.floor(Math.min(norm1.length, norm2.length) * 0.1));
+    return distance <= threshold;
+}
+
 // Actions
 function handleSaveNote() {
     if (!inputText.trim()) return;
+
+    // Check for exact or close duplicate across all notes
+    const matchedNote = notes.find(n => areTextsClose(n.content, inputText));
+    if (matchedNote) {
+        // Change active board if needed
+        if (activeBoardId !== matchedNote.boardId) {
+            activeBoardId = matchedNote.boardId;
+            renderBoardsNav();
+            updateCurrentBoardBtn();
+        }
+        
+        // Expand the matched note
+        expandedNoteIds.add(matchedNote.id);
+        renderNotes();
+
+        // Clear input field
+        inputText = '';
+        elements.noteInput.value = '';
+        elements.noteInput.style.height = 'auto';
+
+        showToast("⚠️ النص موجود فعلاً!");
+
+        // Scroll to the note
+        setTimeout(() => {
+            const noteEl = document.getElementById('note-' + matchedNote.id);
+            if (noteEl) {
+                noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                noteEl.classList.add('note-highlight');
+                setTimeout(() => {
+                    noteEl.classList.remove('note-highlight');
+                }, 3000);
+            }
+        }, 120);
+        return;
+    }
 
     const newNote = {
         id: crypto.randomUUID(),
