@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:1" />
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#0f172a" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+  <!-- Background with perfect squircle or rounded rectangle for maskable/app icon -->
+  <rect width="512" height="512" rx="120" fill="url(#blueGrad)"/>
+  
+  <!-- Outer glowing background effect -->
+  <circle cx="256" cy="256" r="180" fill="#ffffff" opacity="0.06" />
+  
+  <!-- Clipboard / Note UI -->
+  <g filter="url(#shadow)" transform="translate(136, 126)">
+    <!-- Main white note paper -->
+    <rect x="10" y="30" width="220" height="250" rx="20" fill="#ffffff" />
+    
+    <!-- Top binder clip -->
+    <rect x="75" y="10" width="90" height="30" rx="8" fill="#1e293b" />
+    <path d="M95,10 C95,2 105,-8 120,-8 C135,-8 145,2 145,10" fill="none" stroke="#64748b" stroke-width="6" stroke-linecap="round" />
+    
+    <!-- Notes Lines (Modern Blue Accent lines) -->
+    <rect x="40" y="90" width="160" height="10" rx="5" fill="#e2e8f0" />
+    <rect x="40" y="130" width="160" height="10" rx="5" fill="#3b82f6" />
+    <rect x="40" y="170" width="160" height="10" rx="5" fill="#e2e8f0" />
+    <rect x="40" y="210" width="100" height="10" rx="5" fill="#e2e8f0" />
+    
+    <!-- Elegant microphone / music indicator indicating Audio note feature -->
+    <g transform="translate(160, 190)">
+      <circle cx="25" cy="25" r="28" fill="#ef4444" />
+      <!-- Small Mic Glyph -->
+      <rect x="21" y="12" width="8" height="16" rx="4" fill="#ffffff" />
+      <path d="M16,18 C16,24 34,24 34,18" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+      <line x1="25" y1="26" x2="25" y2="34" stroke="#ffffff" stroke-width="3" stroke-linecap="round" />
+    </g>
+  </g>
+</svg>
