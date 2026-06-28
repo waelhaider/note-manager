@@ -28,7 +28,7 @@ let isOwnerPanelOpen = false;   // Owner license manager collapsible toggle stat
 
 // Firebase & Drive Helper Functions
 async function firestoreWriteNote(note) {
-    if (!db || !isOwner) return;
+    if (!db || !isOwner || note.boardId === 'local_user') return;
     try {
         await setDoc(doc(db, "notes", note.id), note);
     } catch (err) {
@@ -38,6 +38,8 @@ async function firestoreWriteNote(note) {
 
 async function firestoreDeleteNote(noteId) {
     if (!db || !isOwner) return;
+    const note = notes.find(n => n.id === noteId);
+    if (note && note.boardId === 'local_user') return;
     try {
         await deleteDoc(doc(db, "notes", noteId));
     } catch (err) {
@@ -46,7 +48,7 @@ async function firestoreDeleteNote(noteId) {
 }
 
 async function firestoreWriteTrash(item) {
-    if (!db || !isOwner) return;
+    if (!db || !isOwner || item.boardId === 'local_user') return;
     try {
         await setDoc(doc(db, "trash", item.id), item);
     } catch (err) {
@@ -56,6 +58,8 @@ async function firestoreWriteTrash(item) {
 
 async function firestoreDeleteTrash(itemId) {
     if (!db || !isOwner) return;
+    const item = trash.find(t => t.id === itemId);
+    if (item && item.boardId === 'local_user') return;
     try {
         await deleteDoc(doc(db, "trash", itemId));
     } catch (err) {
@@ -64,7 +68,7 @@ async function firestoreDeleteTrash(itemId) {
 }
 
 async function firestoreWriteBoard(board) {
-    if (!db || !isOwner) return;
+    if (!db || !isOwner || board.id === 'local_user') return;
     try {
         await setDoc(doc(db, "boards", board.id), board);
     } catch (err) {
@@ -73,7 +77,7 @@ async function firestoreWriteBoard(board) {
 }
 
 async function firestoreDeleteBoard(boardId) {
-    if (!db || !isOwner) return;
+    if (!db || !isOwner || boardId === 'local_user') return;
     try {
         await deleteDoc(doc(db, "boards", boardId));
     } catch (err) {
@@ -97,12 +101,15 @@ async function uploadAllToFirestore() {
     if (!db || !isOwner) return;
     try {
         for (const board of boards) {
+            if (board.id === 'local_user') continue;
             await setDoc(doc(db, "boards", board.id), board);
         }
         for (const note of notes) {
+            if (note.boardId === 'local_user') continue;
             await setDoc(doc(db, "notes", note.id), note);
         }
         for (const item of trash) {
+            if (item.boardId === 'local_user') continue;
             await setDoc(doc(db, "trash", item.id), item);
         }
     } catch (e) {
@@ -140,7 +147,10 @@ async function uploadBackupToDrive(token, fileId) {
         name: "clipboard_manager_backup.json",
         mimeType: "application/json"
     };
-    const content = JSON.stringify({ boards, notes, trash });
+    const cloudBoards = boards.filter(b => b.id !== 'local_user');
+    const cloudNotes = notes.filter(n => n.boardId !== 'local_user');
+    const cloudTrash = trash.filter(t => t.boardId !== 'local_user');
+    const content = JSON.stringify({ boards: cloudBoards, notes: cloudNotes, trash: cloudTrash });
     
     try {
         if (fileId) {
@@ -186,6 +196,65 @@ async function uploadBackupToDrive(token, fileId) {
     }
 }
 
+// Upload Audio File to Google Drive
+async function uploadAudioToDrive(token, file) {
+    const metadata = {
+        name: `clipboard_audio_${Date.now()}_${file.name}`,
+        mimeType: file.type
+    };
+
+    // Step 1: Create file metadata
+    const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify(metadata)
+    });
+    
+    if (!createRes.ok) {
+        throw new Error("Failed to create file on Google Drive");
+    }
+    
+    const fileData = await createRes.json();
+    const fileId = fileData.id;
+    if (!fileId) throw new Error("Failed to create file on Google Drive");
+
+    // Step 2: Upload file media
+    const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": file.type
+        },
+        body: file
+    });
+    
+    if (!uploadRes.ok) {
+        throw new Error("Failed to upload file media to Google Drive");
+    }
+
+    // Step 3: Set permission to 'anyone' reader so anyone with the link can play it
+    try {
+        await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                role: "reader",
+                type: "anyone"
+            })
+        });
+    } catch (permErr) {
+        console.error("Error setting public permissions:", permErr);
+    }
+
+    return fileId;
+}
+
 // UI restrictions and sync loaders
 function applyOwnershipUIRestrictions() {
     const flexDisplayVal = isOwner ? 'flex' : 'none';
@@ -204,14 +273,10 @@ function applyOwnershipUIRestrictions() {
     const emptyTrash = document.getElementById('empty-trash-btn');
     if (emptyTrash) emptyTrash.style.display = isOwner ? 'block' : 'none';
 
-    // Hide or replace inputs if not owner
+    // Keep note input form visible for both owners and visitors
     const noteForm = document.getElementById('note-form');
     if (noteForm) {
-        if (!isOwner) {
-            noteForm.style.display = 'none';
-        } else {
-            noteForm.style.display = 'flex';
-        }
+        noteForm.style.display = 'flex';
     }
 
     const saveEditTranslate = document.getElementById('save-edit-translate');
@@ -634,40 +699,73 @@ async function loadCloudData() {
             let cloudTrash = [];
             trashSnap.forEach(d => { cloudTrash.push(d.data()); });
             
+            // Preserve local-only board and its notes/trash
+            const localBoards = boards.filter(b => b.id === 'local_user');
+            const localNotes = notes.filter(n => n.boardId === 'local_user');
+            const localTrash = trash.filter(t => t.boardId === 'local_user');
+
             if (isOwner && currentUser) {
                 // Safeguard: If the cloud is completely empty of boards and notes but we have local data,
                 // automatically push our local data to the cloud rather than wiping it!
-                if (cloudNotes.length === 0 && cloudBoards.length === 0 && (notes.length > 0 || boards.length > 0)) {
+                const uploadableNotes = notes.filter(n => n.boardId !== 'local_user');
+                const uploadableBoards = boards.filter(b => b.id !== 'local_user');
+                if (cloudNotes.length === 0 && cloudBoards.length === 0 && (uploadableNotes.length > 0 || uploadableBoards.length > 0)) {
                     showToast("جاري رفع نصوصك ولوحاتك المحلية سحابياً للمزامنة...");
                     await uploadAllToFirestore();
                 } else {
                     // Pull cloud data into memory
-                    if (cloudBoards.length > 0) {
-                        boards = cloudBoards;
-                    }
-                    notes = cloudNotes;
-                    trash = cloudTrash;
+                    const cleanedCloudBoards = cloudBoards.filter(b => b.id !== 'local_user');
+                    const cleanedCloudNotes = cloudNotes.filter(n => n.boardId !== 'local_user');
+                    const cleanedCloudTrash = cloudTrash.filter(t => t.boardId !== 'local_user');
+
+                    boards = [...localBoards, ...cleanedCloudBoards];
+                    notes = [...localNotes, ...cleanedCloudNotes];
+                    trash = [...localTrash, ...cleanedCloudTrash];
                     
-                    // Keep local storage in sync with cloud
-                    localStorage.setItem('app_boards', JSON.stringify(boards));
-                    localStorage.setItem('app_notes', JSON.stringify(notes));
-                    localStorage.setItem('app_trash', JSON.stringify(trash));
+                    // Keep IndexedDB in sync with cloud
+                    await saveData();
                 }
             } else {
                 // Spectator (either not logged in, or logged in as different user): pull cloud data only
-                if (cloudBoards.length > 0) {
-                    boards = cloudBoards;
-                } else {
-                    boards = [{ id: '1', name: 'الافتراضية', order: 1 }];
+                const cleanedCloudBoards = cloudBoards.filter(b => b.id !== 'local_user');
+                const cleanedCloudNotes = cloudNotes.filter(n => n.boardId !== 'local_user');
+                const cleanedCloudTrash = cloudTrash.filter(t => t.boardId !== 'local_user');
+
+                if (localBoards.length === 0) {
+                    localBoards.push({ id: 'local_user', name: 'لوحة المستخدم', order: -999, isFree: true });
                 }
-                notes = cloudNotes;
-                trash = cloudTrash;
+
+                if (cleanedCloudBoards.length === 0) {
+                    cleanedCloudBoards.push({ id: '1', name: 'الرئيسية', order: 0, isFree: true });
+                }
+
+                boards = [...localBoards, ...cleanedCloudBoards];
+                notes = [...localNotes, ...cleanedCloudNotes];
+                trash = [...localTrash, ...cleanedCloudTrash];
+
+                await saveData();
             }
             
+            // Map board names to rename 'عام' to 'الرئيسية'
+            boards = boards.map(b => {
+                if (b.id === '1' || b.name === 'عام') {
+                    return { ...b, name: 'الرئيسية' };
+                }
+                return b;
+            });
+
+            // Ensure 'local_user' exists and is at order -999
+            const hasLocalUser = boards.some(b => b.id === 'local_user');
+            if (!hasLocalUser) {
+                boards.unshift({ id: 'local_user', name: 'لوحة المستخدم', order: -999, isFree: true });
+            } else {
+                boards = boards.map(b => b.id === 'local_user' ? { ...b, name: 'لوحة المستخدم', order: -999 } : b);
+            }
+
             // Re-order and reset active board if needed
             boards = boards.sort((a,b) => a.order - b.order);
             if (!boards.find(b => b.id === activeBoardId)) {
-                activeBoardId = boards[0]?.id || '1';
+                activeBoardId = boards[0]?.id || 'local_user';
             }
             
             await checkLicenseAndAccess();
@@ -754,12 +852,18 @@ async function handleLogin() {
                     if (boards.length === 0 || notes.length === 0) {
                         const backup = await downloadBackupFromDrive(googleAccessToken, googleDriveFileId);
                         if (backup && backup.boards) {
-                            boards = backup.boards;
-                            notes = backup.notes || [];
-                            trash = backup.trash || [];
-                            localStorage.setItem('app_boards', JSON.stringify(boards));
-                            localStorage.setItem('app_notes', JSON.stringify(notes));
-                            localStorage.setItem('app_trash', JSON.stringify(trash));
+                            const localUserBoard = boards.find(b => b.id === 'local_user') || { id: 'local_user', name: 'لوحة المستخدم', order: -999, isFree: true };
+                            const localNotes = notes.filter(n => n.boardId === 'local_user');
+                            const localTrash = trash.filter(t => t.boardId === 'local_user');
+                            
+                            const backupBoards = (backup.boards || []).filter(b => b.id !== 'local_user');
+                            const backupNotes = (backup.notes || []).filter(n => n.boardId !== 'local_user');
+                            const backupTrash = (backup.trash || []).filter(t => t.boardId !== 'local_user');
+
+                            boards = [localUserBoard, ...backupBoards];
+                            notes = [...localNotes, ...backupNotes];
+                            trash = [...localTrash, ...backupTrash];
+                            await saveData();
                             await uploadAllToFirestore();
                         }
                     }
@@ -860,6 +964,92 @@ function updateAuthUI() {
     renderOwnerLicenseManager();
 }
 
+// IndexedDB Storage Engine (Asynchronous Local Storage replacement)
+const DB_NAME = 'app_notes_db';
+const DB_VERSION = 1;
+const STORE_NAME = 'app_store';
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+            }
+        };
+        request.onsuccess = (e) => resolve(e.target.result);
+        request.onerror = (e) => reject(e.target.error);
+    });
+}
+
+function getIDBValue(key) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(STORE_NAME, 'readonly');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(key);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }).catch(err => {
+        console.error("IndexedDB get error:", err);
+        return null;
+    });
+}
+
+function setIDBValue(key, value) {
+    return openDB().then(db => {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(STORE_NAME, 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.put(value, key);
+            request.onsuccess = () => resolve();
+            request.onerror = () => reject(request.error);
+        });
+    }).catch(err => {
+        console.error("IndexedDB put error:", err);
+    });
+}
+
+// Populate Note Publishing Selector options dynamically
+function populatePublishBoardSelect() {
+    const select = document.getElementById('publish-board-select');
+    if (!select) return;
+    
+    const previousValue = select.value;
+    select.innerHTML = '';
+    
+    let targetBoards = [];
+    if (isOwner) {
+        targetBoards = [...boards];
+    } else {
+        // Visitors can only publish locally to 'لوحة المستخدم'
+        targetBoards = boards.filter(b => b.id === 'local_user');
+    }
+    
+    // Sort so 'local_user' or lowest order is first
+    const sortedBoards = targetBoards.sort((a, b) => {
+        if (a.id === 'local_user') return -1;
+        if (b.id === 'local_user') return 1;
+        return a.order - b.order;
+    });
+    
+    sortedBoards.forEach(board => {
+        const option = document.createElement('option');
+        option.value = board.id;
+        option.textContent = board.name;
+        select.appendChild(option);
+    });
+    
+    // Retain previous selection if valid, otherwise fallback to 'local_user'
+    if (previousValue && targetBoards.some(b => b.id === previousValue)) {
+        select.value = previousValue;
+    } else {
+        select.value = 'local_user';
+    }
+}
+
 // State
 let boards = [];
 let notes = [];
@@ -876,6 +1066,17 @@ let openMenuId = null; // For menu and highlight
 let fontSize = 14; // Default font size in px
 let modal = { type: 'NONE', data: null };
 let toastMessage = '';
+
+// Audio upload state
+let selectedAudioFile = null;
+let selectedAudioBase64 = null;
+let selectedAudioName = '';
+
+// Audio edit state
+let editSelectedAudioFile = null;
+let editSelectedAudioBase64 = null;
+let editSelectedAudioName = '';
+let editAudioDeleted = false;
 
 // Language map for translation
 const languageMap = {
@@ -919,44 +1120,66 @@ function initElements() {
     elements.importTextFile = document.getElementById('import-text-file');
 }
 
-// Load data from localStorage
-function loadData() {
+// Load data from IndexedDB
+async function loadData() {
     try {
-        const savedBoards = localStorage.getItem('app_boards');
-        if (savedBoards) boards = JSON.parse(savedBoards);
-        else boards = [
-            { id: '1', name: 'عام', order: 0 },
-            { id: '2', name: 'شخصي', order: 1 },
-            { id: '3', name: 'عمل', order: 2 }
-        ];
+        const savedBoards = await getIDBValue('app_boards');
+        if (savedBoards) {
+            boards = JSON.parse(savedBoards);
+        } else {
+            // First time load: only show 'لوحة المستخدم' and 'الرئيسية' (which replaces 'عام')
+            boards = [
+                { id: 'local_user', name: 'لوحة المستخدم', order: -999, isFree: true },
+                { id: '1', name: 'الرئيسية', order: 0, isFree: true }
+            ];
+        }
 
-        const savedNotes = localStorage.getItem('app_notes');
+        const savedNotes = await getIDBValue('app_notes');
         notes = savedNotes ? JSON.parse(savedNotes) : [];
 
-        const savedTrash = localStorage.getItem('app_trash');
+        const savedTrash = await getIDBValue('app_trash');
         trash = savedTrash ? JSON.parse(savedTrash) : [];
     } catch (e) {
         console.error('Failed to load data', e);
         boards = [
-            { id: '1', name: 'عام', order: 0 },
-            { id: '2', name: 'شخصي', order: 1 },
-            { id: '3', name: 'عمل', order: 2 }
+            { id: 'local_user', name: 'لوحة المستخدم', order: -999, isFree: true },
+            { id: '1', name: 'الرئيسية', order: 0, isFree: true }
         ];
         notes = [];
         trash = [];
     }
 
+    // Ensure 'لوحة المستخدم' (id: 'local_user') always exists in the boards list and is first
+    const hasLocalUser = boards.some(b => b.id === 'local_user');
+    if (!hasLocalUser) {
+        boards.unshift({ id: 'local_user', name: 'لوحة المستخدم', order: -999, isFree: true });
+    } else {
+        // Double check it's named correctly and order is correct
+        boards = boards.map(b => b.id === 'local_user' ? { ...b, name: 'لوحة المستخدم', order: -999 } : b);
+    }
+
+    // Map board names to rename 'عام' to 'الرئيسية'
+    boards = boards.map(b => {
+        if (b.id === '1' || b.name === 'عام') {
+            return { ...b, name: 'الرئيسية' };
+        }
+        return b;
+    });
+
     // Ensure activeBoardId is valid
     if (!boards.find(b => b.id === activeBoardId)) {
-        activeBoardId = boards[0]?.id || '1';
+        activeBoardId = boards[0]?.id || 'local_user';
     }
+    
+    // Populate the publish dropdown
+    populatePublishBoardSelect();
 }
 
-// Save data to localStorage
-function saveData() {
-    localStorage.setItem('app_boards', JSON.stringify(boards));
-    localStorage.setItem('app_notes', JSON.stringify(notes));
-    localStorage.setItem('app_trash', JSON.stringify(trash));
+// Save data to IndexedDB
+async function saveData() {
+    await setIDBValue('app_boards', JSON.stringify(boards));
+    await setIDBValue('app_notes', JSON.stringify(notes));
+    await setIDBValue('app_trash', JSON.stringify(trash));
     
     if (isOwner && currentUser) {
         // Automatically sync to Firestore
@@ -980,7 +1203,7 @@ function showToast(message) {
     elements.toast.classList.add('show');
     setTimeout(() => {
         elements.toast.classList.remove('show');
-    }, 3000);
+    }, 1000);
 }
 
 // Custom Dialog Handlers (Iframe & Sandbox Safe)
@@ -1147,7 +1370,7 @@ function renderBoardsNav() {
         const btn = document.createElement('button');
         btn.className = `board-btn ${board.id === activeBoardId ? 'active' : ''}`;
         
-        const isPremiumBoard = !board.isFree && !isUserPremium;
+        const isPremiumBoard = !board.isFree && !isUserPremium && board.id !== 'local_user';
         btn.textContent = isPremiumBoard ? '🔒 ' + board.name : board.name;
         
         const count = notes.filter(n => n.boardId === board.id).length;
@@ -1165,6 +1388,8 @@ function renderBoardsNav() {
         };
         elements.boardsNav.appendChild(btn);
     });
+
+    populatePublishBoardSelect();
 }
 
 // Update current board button
@@ -1189,7 +1414,7 @@ function renderBoardsList() {
         const name = document.createElement('span');
         name.className = 'board-name';
         
-        const isPremiumBoard = !board.isFree && !isUserPremium;
+        const isPremiumBoard = !board.isFree && !isUserPremium && board.id !== 'local_user';
         name.textContent = isPremiumBoard ? '🔒 ' + board.name : board.name;
 
         const actions = document.createElement('div');
@@ -1205,12 +1430,13 @@ function renderBoardsList() {
         deleteBtn.innerHTML = '🗑';
         deleteBtn.onclick = () => openModal('DELETE_BOARD', board);
 
-        if (isOwner) {
+        const isFixedBoard = board.id === 'local_user' || board.id === '1';
+        if (isOwner && !isFixedBoard) {
             actions.appendChild(editBtn);
             actions.appendChild(deleteBtn);
         }
         item.appendChild(name);
-        if (isOwner) {
+        if (isOwner && !isFixedBoard) {
             item.appendChild(actions);
         }
         elements.boardsList.appendChild(item);
@@ -1349,7 +1575,8 @@ function renderNotes() {
     filteredNotes.forEach(note => {
         const item = document.createElement('div');
         item.id = `note-${note.id}`;
-        item.className = `note-item ${expandedNoteIds.has(note.id) ? 'active' : ''} ${note.id === openMenuId ? 'menu-open' : ''}`;
+        const hasAudio = !!(note.audioData || note.audioDriveId);
+        item.className = `note-item ${expandedNoteIds.has(note.id) ? 'active' : ''} ${note.id === openMenuId ? 'menu-open' : ''} ${hasAudio ? 'has-audio' : ''}`;
 
         const content = document.createElement('div');
         content.className = 'note-content';
@@ -1366,13 +1593,60 @@ function renderNotes() {
 
         const date = document.createElement('span');
         date.className = 'note-date';
-        date.textContent = new Date(note.timestamp).toLocaleDateString('ar-EG', {
-            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
-        });
+        const noteDateObj = new Date(note.timestamp);
+        const dayStr = String(noteDateObj.getDate()).padStart(2, '0');
+        const monthStr = String(noteDateObj.getMonth() + 1).padStart(2, '0');
+        const yearStr = noteDateObj.getFullYear();
+        let hours = noteDateObj.getHours();
+        const ampm = hours >= 12 ? 'pm' : 'am';
+        hours = hours % 12;
+        hours = hours ? hours : 12; // the hour '0' should be '12'
+        const hoursStr = String(hours).padStart(2, '0');
+        const minutesStr = String(noteDateObj.getMinutes()).padStart(2, '0');
+        date.textContent = `${dayStr}/${monthStr}/${yearStr} ${hoursStr}:${minutesStr} ${ampm}`;
 
         meta.appendChild(date);
         content.appendChild(text);
         content.appendChild(meta);
+
+        // Render audio player if note has an audio attachment
+        if (note.audioData || note.audioDriveId) {
+            const audioContainer = document.createElement('div');
+            audioContainer.className = 'note-audio-container';
+            // Stop propagation to prevent note expansion toggle
+            audioContainer.onclick = (e) => {
+                e.stopPropagation();
+            };
+
+            const audioInfo = document.createElement('div');
+            audioInfo.className = 'note-audio-info';
+
+            const audioIconObj = document.createElement('span');
+            audioIconObj.className = 'note-audio-icon';
+            audioIconObj.textContent = '🎙️';
+
+            const audioTitleObj = document.createElement('span');
+            audioTitleObj.className = 'note-audio-title';
+            audioTitleObj.textContent = note.audioName || 'ملف صوتي';
+
+            audioInfo.appendChild(audioIconObj);
+            audioInfo.appendChild(audioTitleObj);
+
+            const audioPlayer = document.createElement('audio');
+            audioPlayer.controls = true;
+            audioPlayer.className = 'note-audio-player';
+            audioPlayer.preload = 'metadata';
+            
+            if (note.audioData) {
+                audioPlayer.src = note.audioData;
+            } else if (note.audioDriveId) {
+                audioPlayer.src = `https://docs.google.com/uc?export=download&id=${note.audioDriveId}`;
+            }
+
+            audioContainer.appendChild(audioInfo);
+            audioContainer.appendChild(audioPlayer);
+            content.appendChild(audioContainer);
+        }
 
         const actions = document.createElement('div');
         actions.className = 'note-actions';
@@ -1439,13 +1713,18 @@ function renderNotes() {
             hideNoteMenu(note.id);
         };
 
+        const canModify = isOwner || note.boardId === 'local_user';
+        const canMove = isOwner;
+
         menu.appendChild(copyBtn);
-        if (isOwner) {
+        if (canModify) {
             menu.appendChild(editBtn);
+        }
+        if (canMove) {
             menu.appendChild(moveBtn);
         }
         menu.appendChild(translateBtn);
-        if (isOwner) {
+        if (canModify) {
             menu.appendChild(deleteBtn);
         }
 
@@ -1510,6 +1789,29 @@ function openModal(type, data = null) {
             // Set text direction
             const isArabic = /\p{Script=Arabic}/u.test(data.content);
             document.getElementById('edit-note-textarea').dir = isArabic ? 'rtl' : 'ltr';
+            
+            // Initialize edit audio state
+            editSelectedAudioFile = null;
+            editSelectedAudioBase64 = null;
+            editSelectedAudioName = '';
+            editAudioDeleted = false;
+            
+            const editAudioInput = document.getElementById('edit-audio-file-input');
+            if (editAudioInput) editAudioInput.value = '';
+            
+            const editAudioStatus = document.getElementById('edit-audio-status');
+            const editAudioNameEl = document.getElementById('edit-audio-name');
+            const editMicLabel = document.getElementById('edit-mic-label');
+            
+            if (data.audioName) {
+                if (editAudioStatus) editAudioStatus.style.display = 'flex';
+                if (editAudioNameEl) editAudioNameEl.textContent = data.audioName;
+                if (editMicLabel) editMicLabel.textContent = 'استبدال الملف الصوتي الحالي';
+            } else {
+                if (editAudioStatus) editAudioStatus.style.display = 'none';
+                if (editMicLabel) editMicLabel.textContent = 'إضافة ملف صوتي';
+            }
+
             // Keep the note expanded during editing
             expandedNoteIds.add(data.id);
             renderNotes();
@@ -1696,7 +1998,7 @@ function areTextsClose(str1, str2) {
 }
 
 // Actions
-function handleSaveNote() {
+async function handleSaveNote() {
     if (!inputText.trim()) return;
 
     // Check for exact or close duplicate across all notes
@@ -1734,21 +2036,63 @@ function handleSaveNote() {
         return;
     }
 
+    const targetBoardId = document.getElementById('publish-board-select')?.value || activeBoardId;
+
     const newNote = {
         id: crypto.randomUUID(),
-        boardId: activeBoardId,
+        boardId: targetBoardId,
         content: inputText,
         timestamp: Date.now()
     };
+
+    // Handle audio file upload if present
+    if (selectedAudioFile) {
+        if (targetBoardId !== 'local_user') {
+            // Owner board -> Google Drive
+            if (googleAccessToken) {
+                showToast("جاري رفع الملف الصوتي إلى Google Drive... 🎙️");
+                try {
+                    const fileId = await uploadAudioToDrive(googleAccessToken, selectedAudioFile);
+                    newNote.audioDriveId = fileId;
+                    newNote.audioName = selectedAudioName;
+                } catch (driveErr) {
+                    console.error("Drive upload failed:", driveErr);
+                    showToast("❌ فشل رفع الملف الصوتي إلى Google Drive.");
+                    return; // block note save
+                }
+            } else {
+                showToast("⚠️ للرفع إلى Google Drive في هذه اللوحة، يرجى تسجيل الدخول أولاً.");
+                return; // block note save
+            }
+        } else {
+            // User board -> Local IndexedDB
+            newNote.audioData = selectedAudioBase64;
+            newNote.audioName = selectedAudioName;
+        }
+    }
 
     notes = [newNote, ...notes];
     inputText = '';
     elements.noteInput.value = '';
     elements.noteInput.style.height = 'auto'; // Reset height
+
+    // Clear audio upload state and reset UI
+    selectedAudioFile = null;
+    selectedAudioBase64 = null;
+    selectedAudioName = '';
+    const audioFileInput = document.getElementById('audio-file-input');
+    if (audioFileInput) audioFileInput.value = '';
+    const selectedAudioContainer = document.getElementById('selected-audio-container');
+    if (selectedAudioContainer) selectedAudioContainer.style.display = 'none';
+
     saveData();
     firestoreWriteNote(newNote);
+    
+    // Switch to target board immediately on save
+    activeBoardId = targetBoardId;
     renderNotes();
     renderBoardsNav();
+    updateCurrentBoardBtn();
     showToast('تم الحفظ بنجاح');
 }
 
@@ -1884,10 +2228,47 @@ function handleBoardDelete() {
     showToast('تم حذف اللوحة');
 }
 
-function handleEditSave() {
+async function handleEditSave() {
     const content = document.getElementById('edit-note-textarea').value;
     const noteId = modal.data.id;
-    const updatedNote = { ...modal.data, content };
+    const originalNote = modal.data;
+    const updatedNote = { ...originalNote, content };
+
+    // Apply audio modifications if deletion was selected
+    if (editAudioDeleted) {
+        delete updatedNote.audioData;
+        delete updatedNote.audioDriveId;
+        delete updatedNote.audioName;
+    }
+
+    // Apply audio modifications if a new file was uploaded
+    if (editSelectedAudioFile) {
+        if (updatedNote.boardId !== 'local_user') {
+            // Owner board -> Google Drive
+            if (googleAccessToken) {
+                showToast("جاري رفع الملف الصوتي الجديد إلى Google Drive... 🎙️");
+                try {
+                    const fileId = await uploadAudioToDrive(googleAccessToken, editSelectedAudioFile);
+                    updatedNote.audioDriveId = fileId;
+                    updatedNote.audioName = editSelectedAudioName;
+                    delete updatedNote.audioData;
+                } catch (driveErr) {
+                    console.error("Drive upload failed during edit:", driveErr);
+                    showToast("❌ فشل رفع الملف الصوتي إلى Google Drive.");
+                    return; // block note save
+                }
+            } else {
+                showToast("⚠️ للرفع إلى Google Drive في هذه اللوحة، يرجى تسجيل الدخول أولاً.");
+                return; // block note save
+            }
+        } else {
+            // User board -> Local IndexedDB
+            updatedNote.audioData = editSelectedAudioBase64;
+            updatedNote.audioName = editSelectedAudioName;
+            delete updatedNote.audioDriveId;
+        }
+    }
+
     notes = notes.map(n => n.id === noteId ? updatedNote : n);
     expandedNoteIds.add(noteId);
     saveData();
@@ -2237,6 +2618,93 @@ function initEventListeners() {
         handleSaveNote();
     };
 
+    // Note Creation Audio attachment handlers
+    const micUploadBtn = document.getElementById('mic-upload-btn');
+    const audioFileInput = document.getElementById('audio-file-input');
+    const selectedAudioContainer = document.getElementById('selected-audio-container');
+    const selectedAudioNameEl = document.getElementById('selected-audio-name');
+    const removeSelectedAudioBtn = document.getElementById('remove-selected-audio-btn');
+
+    if (micUploadBtn && audioFileInput) {
+        micUploadBtn.onclick = () => {
+            audioFileInput.click();
+        };
+
+        audioFileInput.onchange = (e) => {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                selectedAudioFile = files[0];
+                selectedAudioName = files[0].name;
+                
+                // Read as base64 for local board
+                const reader = new FileReader();
+                reader.onload = (readerEvent) => {
+                    selectedAudioBase64 = readerEvent.target.result;
+                };
+                reader.readAsDataURL(selectedAudioFile);
+
+                if (selectedAudioNameEl) selectedAudioNameEl.textContent = selectedAudioName;
+                if (selectedAudioContainer) selectedAudioContainer.style.display = 'flex';
+            }
+        };
+    }
+
+    if (removeSelectedAudioBtn) {
+        removeSelectedAudioBtn.onclick = () => {
+            selectedAudioFile = null;
+            selectedAudioBase64 = null;
+            selectedAudioName = '';
+            if (audioFileInput) audioFileInput.value = '';
+            if (selectedAudioContainer) selectedAudioContainer.style.display = 'none';
+        };
+    }
+
+    // Edit Note Audio attachment handlers
+    const editMicBtn = document.getElementById('edit-mic-btn');
+    const editAudioFileInput = document.getElementById('edit-audio-file-input');
+    const editAudioStatus = document.getElementById('edit-audio-status');
+    const editAudioNameEl = document.getElementById('edit-audio-name');
+    const deleteEditAudioBtn = document.getElementById('delete-edit-audio-btn');
+    const editMicLabel = document.getElementById('edit-mic-label');
+
+    if (editMicBtn && editAudioFileInput) {
+        editMicBtn.onclick = () => {
+            editAudioFileInput.click();
+        };
+
+        editAudioFileInput.onchange = (e) => {
+            const files = e.target.files;
+            if (files && files.length > 0) {
+                editSelectedAudioFile = files[0];
+                editSelectedAudioName = files[0].name;
+
+                // Read as base64
+                const reader = new FileReader();
+                reader.onload = (readerEvent) => {
+                    editSelectedAudioBase64 = readerEvent.target.result;
+                };
+                reader.readAsDataURL(editSelectedAudioFile);
+
+                if (editAudioNameEl) editAudioNameEl.textContent = editSelectedAudioName + " (جديد)";
+                if (editAudioStatus) editAudioStatus.style.display = 'flex';
+                if (editMicLabel) editMicLabel.textContent = 'استبدال الملف الصوتي';
+                editAudioDeleted = false;
+            }
+        };
+    }
+
+    if (deleteEditAudioBtn) {
+        deleteEditAudioBtn.onclick = () => {
+            editSelectedAudioFile = null;
+            editSelectedAudioBase64 = null;
+            editSelectedAudioName = '';
+            editAudioDeleted = true;
+            if (editAudioFileInput) editAudioFileInput.value = '';
+            if (editAudioStatus) editAudioStatus.style.display = 'none';
+            if (editMicLabel) editMicLabel.textContent = 'إضافة ملف صوتي';
+        };
+    }
+
     elements.noteInput.oninput = (e) => {
         inputText = e.target.value;
         e.target.style.height = 'auto';
@@ -2474,9 +2942,9 @@ function initBackToTop() {
 }
 
 // Initialize app
-function init() {
+async function init() {
     initElements();
-    loadData();
+    await loadData();
     renderBoardsNav();
     updateCurrentBoardBtn();
     renderBoardsList();
@@ -2572,7 +3040,7 @@ document.addEventListener('click', (e) => {
 });
 
 // Start the app
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     loadFontSize();
-    init();
+    await init();
 });
