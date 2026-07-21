@@ -18,6 +18,7 @@ let googleAccessToken = null;
 let isOwner = false; // By default read-only (spectator mode) until confirmed as owner in database
 let ownerEmail = null;
 let googleDriveFileId = null;
+let googleDriveFolderId = null;
 
 // Premium Membership & Licensing States
 let isAllFree = false;          // True if owner opens the entire app for everyone (gift option)
@@ -118,12 +119,86 @@ async function uploadAllToFirestore() {
 }
 
 // Google Drive Sync API Utilities (Direct Fetch Integration)
-async function findBackupFileOnDrive(token) {
+async function getOrCreateFolderId(token) {
+    if (googleDriveFolderId) return googleDriveFolderId;
+    
     try {
-        const url = "https://www.googleapis.com/drive/v3/files?q=name='clipboard_manager_backup.json' and trashed=false&fields=files(id,name)";
+        const query = encodeURIComponent("name='clipboard manager' and mimeType='application/vnd.google-apps.folder' and trashed=false and 'root' in parents");
+        const url = `https://www.googleapis.com/drive/v3/files?q=${query}&fields=files(id,name)`;
         const res = await fetch(url, {
             headers: { "Authorization": `Bearer ${token}` }
         });
+        if (!res.ok) throw new Error("Search folder failed");
+        const data = await res.json();
+        if (data.files && data.files.length > 0) {
+            googleDriveFolderId = data.files[0].id;
+            return googleDriveFolderId;
+        }
+        
+        const createUrl = "https://www.googleapis.com/drive/v3/files";
+        const createRes = await fetch(createUrl, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                name: "clipboard manager",
+                mimeType: "application/vnd.google-apps.folder",
+                parents: ["root"]
+            })
+        });
+        if (!createRes.ok) throw new Error("Create folder failed");
+        const createData = await createRes.json();
+        googleDriveFolderId = createData.id;
+        return googleDriveFolderId;
+    } catch (err) {
+        console.error("Error in getOrCreateFolderId:", err);
+        return null;
+    }
+}
+
+async function cleanOldBackups(token, folderId) {
+    try {
+        let query = "name contains 'clipboard_manager_backup' and trashed=false";
+        if (folderId) {
+            query += ` and '${folderId}' in parents`;
+        }
+        const encodedQuery = encodeURIComponent(query);
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodedQuery}&orderBy=createdTime desc&fields=files(id,name,createdTime)`;
+        const res = await fetch(url, {
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.files && data.files.length > 3) {
+            const filesToDelete = data.files.slice(3);
+            for (const file of filesToDelete) {
+                console.log("Deleting old backup:", file.name, file.id);
+                await fetch(`https://www.googleapis.com/drive/v3/files/${file.id}`, {
+                    method: "DELETE",
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
+            }
+        }
+    } catch (err) {
+        console.error("Error cleaning old backups:", err);
+    }
+}
+
+async function findBackupFileOnDrive(token) {
+    try {
+        const folderId = await getOrCreateFolderId(token);
+        let query = "name contains 'clipboard_manager_backup' and trashed=false";
+        if (folderId) {
+            query += ` and '${folderId}' in parents`;
+        }
+        const encodedQuery = encodeURIComponent(query);
+        const url = `https://www.googleapis.com/drive/v3/files?q=${encodedQuery}&orderBy=createdTime desc&fields=files(id,name,createdTime)`;
+        const res = await fetch(url, {
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+        if (!res.ok) return null;
         const data = await res.json();
         if (data.files && data.files.length > 0) {
             return data.files[0].id;
@@ -143,27 +218,60 @@ async function downloadBackupFromDrive(token, fileId) {
 }
 
 async function uploadBackupToDrive(token, fileId) {
-    const metadata = {
-        name: "clipboard_manager_backup.json",
-        mimeType: "application/json"
-    };
-    const cloudBoards = boards.filter(b => b.id !== 'local_user');
-    const cloudNotes = notes.filter(n => n.boardId !== 'local_user');
-    const cloudTrash = trash.filter(t => t.boardId !== 'local_user');
-    const content = JSON.stringify({ boards: cloudBoards, notes: cloudNotes, trash: cloudTrash });
-    
     try {
-        if (fileId) {
-            const url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`;
-            await fetch(url, {
-                method: "PATCH",
-                headers: {
-                    "Authorization": `Bearer ${token}`,
-                    "Content-Type": "application/json"
-                },
-                body: content
-            });
-        } else {
+        const folderId = await getOrCreateFolderId(token);
+        
+        let query = "name contains 'clipboard_manager_backup' and trashed=false";
+        if (folderId) {
+            query += ` and '${folderId}' in parents`;
+        }
+        const encodedQuery = encodeURIComponent(query);
+        const listUrl = `https://www.googleapis.com/drive/v3/files?q=${encodedQuery}&orderBy=createdTime desc&fields=files(id,name,createdTime)`;
+        const listRes = await fetch(listUrl, {
+            headers: { "Authorization": `Bearer ${token}` }
+        });
+        
+        let existingFiles = [];
+        if (listRes.ok) {
+            const listData = await listRes.json();
+            existingFiles = listData.files || [];
+        }
+
+        const cloudBoards = boards.filter(b => b.id !== 'local_user');
+        const cloudNotes = notes.filter(n => n.boardId !== 'local_user');
+        const cloudTrash = trash.filter(t => t.boardId !== 'local_user');
+        const content = JSON.stringify({ boards: cloudBoards, notes: cloudNotes, trash: cloudTrash });
+
+        let targetFileId = null;
+        let shouldCreateNew = true;
+
+        if (existingFiles.length > 0) {
+            const latestFile = existingFiles[0];
+            const latestCreatedTime = new Date(latestFile.createdTime).getTime();
+            const now = Date.now();
+            const timeDiffMs = now - latestCreatedTime;
+
+            // If the latest backup is less than 5 minutes old, overwrite it to prevent API/file spam.
+            if (timeDiffMs < 5 * 60 * 1000) {
+                targetFileId = latestFile.id;
+                shouldCreateNew = false;
+            }
+        }
+
+        if (shouldCreateNew) {
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const timestamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+            const backupName = `clipboard_manager_backup_${timestamp}.json`;
+
+            const metadata = {
+                name: backupName,
+                mimeType: "application/json"
+            };
+            if (folderId) {
+                metadata.parents = [folderId];
+            }
+
             const boundary = "foo_bar_boundary";
             const delimiter = `\r\n--${boundary}\r\n`;
             const closeDelimiter = `\r\n--${boundary}--`;
@@ -190,69 +298,148 @@ async function uploadBackupToDrive(token, fileId) {
             if (data.id) {
                 googleDriveFileId = data.id;
             }
+
+            await cleanOldBackups(token, folderId);
+        } else {
+            const url = `https://www.googleapis.com/upload/drive/v3/files/${targetFileId}?uploadType=media`;
+            await fetch(url, {
+                method: "PATCH",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                },
+                body: content
+            });
+            googleDriveFileId = targetFileId;
         }
     } catch (e) {
         console.error("Error backing up to Google Drive:", e);
     }
 }
 
-// Upload Audio File to Google Drive
+// Upload Audio File to Google Drive with upload progress tracking
 async function uploadAudioToDrive(token, file) {
-    const metadata = {
-        name: `clipboard_audio_${Date.now()}_${file.name}`,
-        mimeType: file.type
-    };
-
-    // Step 1: Create file metadata
-    const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify(metadata)
-    });
-    
-    if (!createRes.ok) {
-        throw new Error("Failed to create file on Google Drive");
-    }
-    
-    const fileData = await createRes.json();
-    const fileId = fileData.id;
-    if (!fileId) throw new Error("Failed to create file on Google Drive");
-
-    // Step 2: Upload file media
-    const uploadRes = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
-        method: "PATCH",
-        headers: {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": file.type
-        },
-        body: file
-    });
-    
-    if (!uploadRes.ok) {
-        throw new Error("Failed to upload file media to Google Drive");
-    }
-
-    // Step 3: Set permission to 'anyone' reader so anyone with the link can play it
     try {
-        await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+        updateUploadProgress(0, file.name);
+
+        const folderId = await getOrCreateFolderId(token);
+
+        const metadata = {
+            name: `clipboard_audio_${Date.now()}_${file.name}`,
+            mimeType: file.type
+        };
+        if (folderId) {
+            metadata.parents = [folderId];
+        }
+
+        // Step 1: Create file metadata on Google Drive
+        const createRes = await fetch("https://www.googleapis.com/drive/v3/files", {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${token}`,
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                role: "reader",
-                type: "anyone"
-            })
+            body: JSON.stringify(metadata)
         });
-    } catch (permErr) {
-        console.error("Error setting public permissions:", permErr);
-    }
+        
+        if (!createRes.ok) {
+            if (createRes.status === 401) {
+                throw new Error("UNAUTHORIZED");
+            }
+            throw new Error("Failed to create file on Google Drive");
+        }
+        
+        const fileData = await createRes.json();
+        const fileId = fileData.id;
+        if (!fileId) throw new Error("Failed to create file on Google Drive");
 
-    return fileId;
+        // Step 2: Upload file media with progress events via XMLHttpRequest
+        const uploadMedia = () => {
+            return new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open("PATCH", `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`);
+                xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+                xhr.setRequestHeader("Content-Type", file.type);
+                
+                // Track upload progress
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const percentComplete = Math.round((event.loaded / event.total) * 100);
+                        updateUploadProgress(percentComplete, file.name);
+                    }
+                };
+                
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve();
+                    } else {
+                        if (xhr.status === 401) {
+                            reject(new Error("UNAUTHORIZED"));
+                        } else {
+                            reject(new Error(`Failed to upload media, status: ${xhr.status}`));
+                        }
+                    }
+                };
+                
+                xhr.onerror = () => {
+                    reject(new Error("Network error during media upload"));
+                };
+                
+                xhr.send(file);
+            });
+        };
+
+        await uploadMedia();
+
+        // Step 3: Set permission to 'anyone' reader so anyone with the link can play it
+        try {
+            await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    role: "reader",
+                    type: "anyone"
+                })
+            });
+        } catch (permErr) {
+            console.error("Error setting public permissions:", permErr);
+        }
+
+        return fileId;
+    } catch (err) {
+        if (err.message === "UNAUTHORIZED") {
+            showToast("⚠️ انتهت صلاحية جلسة Google Drive. يرجى تسجيل الخروج والولوج مجدداً لتحديث الرمز.");
+            // Reset token to prompt login on next try
+            googleAccessToken = null;
+            localStorage.removeItem('google_access_token');
+        }
+        throw err;
+    } finally {
+        hideUploadProgress();
+    }
+}
+
+// Delete Audio File from Google Drive
+async function deleteAudioFromDrive(token, fileId) {
+    if (!token || !fileId) return;
+    try {
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
+            method: "DELETE",
+            headers: {
+                "Authorization": `Bearer ${token}`
+            }
+        });
+        if (!res.ok) {
+            console.error("Failed to delete file from Google Drive, status:", res.status);
+        } else {
+            console.log("Successfully deleted file from Google Drive:", fileId);
+        }
+    } catch (err) {
+        console.error("Error deleting file from Google Drive:", err);
+    }
 }
 
 // UI restrictions and sync loaders
@@ -306,11 +493,14 @@ function updateSyncBadge() {
                     if (googleAccessToken) {
                         try {
                             await uploadBackupToDrive(googleAccessToken, googleDriveFileId);
+                            showToast("تم إنشاء نسخة احتياطية في غوغل درايف بنجاح");
                         } catch (driveErr) {
                             console.error("Drive sync failed during header sync:", driveErr);
+                            showToast("تمت المزامنة وحفظ التعديلات بنجاح! ☁️");
                         }
+                    } else {
+                        showToast("تمت المزامنة وحفظ التعديلات بنجاح! ☁️");
                     }
-                    showToast("تمت المزامنة وحفظ التعديلات بنجاح! ☁️");
                 } catch (err) {
                     console.error("Header sync failed:", err);
                     showToast("فشلت المزامنة المباشرة، يرجى المحاولة لاحقاً");
@@ -813,6 +1003,11 @@ async function handleLogin() {
         const result = await signInWithPopup(auth, provider);
         const credential = GoogleAuthProvider.credentialFromResult(result);
         googleAccessToken = credential?.accessToken || null;
+        if (googleAccessToken) {
+            localStorage.setItem('google_access_token', googleAccessToken);
+        } else {
+            localStorage.removeItem('google_access_token');
+        }
         currentUser = result.user;
         
         const globalRef = doc(db, "settings", "global");
@@ -869,7 +1064,7 @@ async function handleLogin() {
                     }
                 } else {
                     await uploadBackupToDrive(googleAccessToken, null);
-                    showToast("تم إنشاء نسخة احتياطية أولى في غوغل درايف.");
+                    showToast("تم إنشاء نسخة احتياطية في غوغل درايف بنجاح");
                 }
             } catch (err) {
                 console.error("Google Drive connection failure: ", err);
@@ -891,6 +1086,8 @@ async function handleLogout() {
         currentUser = null;
         googleAccessToken = null;
         googleDriveFileId = null;
+        googleDriveFolderId = null;
+        localStorage.removeItem('google_access_token');
         isOwner = false;
         ownerEmail = null;
         
@@ -961,6 +1158,7 @@ function updateAuthUI() {
         const loginBtn = document.getElementById('auth-login-btn');
         if (loginBtn) loginBtn.onclick = handleLogin;
     }
+    updateAudioAuthWarnings();
     renderOwnerLicenseManager();
 }
 
@@ -1020,6 +1218,12 @@ function populatePublishBoardSelect() {
     const previousValue = select.value;
     select.innerHTML = '';
     
+    // Add default placeholder option "تحديد لوحة للنشر"
+    const placeholderOption = document.createElement('option');
+    placeholderOption.value = "";
+    placeholderOption.textContent = "تحديد لوحة للنشر";
+    select.appendChild(placeholderOption);
+    
     let targetBoards = [];
     if (isOwner) {
         targetBoards = [...boards];
@@ -1042,11 +1246,38 @@ function populatePublishBoardSelect() {
         select.appendChild(option);
     });
     
-    // Retain previous selection if valid, otherwise fallback to 'local_user'
-    if (previousValue && targetBoards.some(b => b.id === previousValue)) {
+    // Retain previous selection if valid or is placeholder, otherwise fallback to ""
+    if (previousValue === "") {
+        select.value = "";
+    } else if (previousValue && targetBoards.some(b => b.id === previousValue)) {
         select.value = previousValue;
     } else {
-        select.value = 'local_user';
+        select.value = "";
+    }
+    updateAudioAuthWarnings();
+}
+
+function updateAudioAuthWarnings() {
+    const newWarning = document.getElementById('new-note-auth-warning');
+    const editWarning = document.getElementById('edit-note-auth-warning');
+
+    // 1. New note form check
+    if (newWarning) {
+        const targetBoardId = document.getElementById('publish-board-select')?.value || activeBoardId;
+        if (selectedAudioFile && targetBoardId !== 'local_user' && !googleAccessToken) {
+            newWarning.style.display = 'flex';
+        } else {
+            newWarning.style.display = 'none';
+        }
+    }
+
+    // 2. Edit note modal check
+    if (editWarning) {
+        if (modal && modal.type === 'EDIT_NOTE' && editSelectedAudioFile && modal.data && modal.data.boardId !== 'local_user' && !googleAccessToken) {
+            editWarning.style.display = 'flex';
+        } else {
+            editWarning.style.display = 'none';
+        }
     }
 }
 
@@ -1077,6 +1308,81 @@ let editSelectedAudioFile = null;
 let editSelectedAudioBase64 = null;
 let editSelectedAudioName = '';
 let editAudioDeleted = false;
+
+// Audio Blob URL Cache to optimize playback memory and support secure contexts (iframes)
+const audioBlobUrlCache = new Map();
+
+function getAudioSrcUrl(noteId, audioData) {
+    if (!audioData) return '';
+    if (audioBlobUrlCache.has(noteId)) {
+        return audioBlobUrlCache.get(noteId);
+    }
+    if (!audioData.startsWith('data:')) {
+        return audioData;
+    }
+    try {
+        const parts = audioData.split(',');
+        const mimeMatch = parts[0].match(/data:(.*?);base64/);
+        const mimeType = mimeMatch ? mimeMatch[1] : 'audio/mpeg';
+        const byteCharacters = atob(parts[1]);
+        const byteArrays = [];
+        
+        for (let offset = 0; offset < byteCharacters.length; offset += 512) {
+            const slice = byteCharacters.slice(offset, offset + 512);
+            const byteNumbers = new Array(slice.length);
+            for (let i = 0; i < slice.length; i++) {
+                byteNumbers[i] = slice.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            byteArrays.push(byteArray);
+        }
+        
+        const blob = new Blob(byteArrays, { type: mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+        audioBlobUrlCache.set(noteId, blobUrl);
+        return blobUrl;
+    } catch (e) {
+        console.error("Error converting audio base64 to blob url:", e);
+        return audioData;
+    }
+}
+
+function clearAudioSrcCache(noteId) {
+    if (audioBlobUrlCache.has(noteId)) {
+        try {
+            URL.revokeObjectURL(audioBlobUrlCache.get(noteId));
+        } catch (err) {
+            console.error("Failed to revoke object URL:", err);
+        }
+        audioBlobUrlCache.delete(noteId);
+    }
+}
+
+function readFileAsDataURL(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = (e) => reject(e.target.error);
+        reader.readAsDataURL(file);
+    });
+}
+
+function updateUploadProgress(percentage, filename) {
+    const modal = document.getElementById('upload-progress-modal');
+    const progressBar = document.getElementById('upload-progress-bar');
+    const progressText = document.getElementById('upload-progress-text');
+    const filenameEl = document.getElementById('upload-progress-filename');
+    
+    if (modal) modal.classList.add('show');
+    if (progressBar) progressBar.style.width = percentage + '%';
+    if (progressText) progressText.textContent = percentage + '%';
+    if (filenameEl) filenameEl.textContent = filename || 'ملف صوتي';
+}
+
+function hideUploadProgress() {
+    const modal = document.getElementById('upload-progress-modal');
+    if (modal) modal.classList.remove('show');
+}
 
 // Language map for translation
 const languageMap = {
@@ -1197,13 +1503,27 @@ async function saveData() {
 }
 
 // Show toast
-function showToast(message) {
+function showToast(message, duration = null) {
     toastMessage = message;
     elements.toastMessage.textContent = message;
     elements.toast.classList.add('show');
-    setTimeout(() => {
+    
+    let activeDuration = duration;
+    if (!activeDuration) {
+        if (message.includes("نسخة احتياطية") || message.includes("نسخة احتياطية في غوغل درايف بنجاح")) {
+            activeDuration = 3000; // 3 seconds for Google Drive backup success messages
+        } else {
+            activeDuration = 1000; // default 1 second for other messages
+        }
+    }
+
+    if (window.toastTimeout) {
+        clearTimeout(window.toastTimeout);
+    }
+    
+    window.toastTimeout = setTimeout(() => {
         elements.toast.classList.remove('show');
-    }, 1000);
+    }, activeDuration);
 }
 
 // Custom Dialog Handlers (Iframe & Sandbox Safe)
@@ -1551,7 +1871,7 @@ function renderNotes() {
 
     let filteredNotes = notes
         .filter(note => note.boardId === activeBoardId)
-        .filter(note => note.content.toLowerCase().includes(searchQuery.toLowerCase()));
+        .filter(note => (note.content || '').toLowerCase().includes(searchQuery.toLowerCase()));
 
     // Sort based on sortOrder
     if (sortOrder === 'timestamp-desc') {
@@ -1559,7 +1879,7 @@ function renderNotes() {
     } else if (sortOrder === 'timestamp-asc') {
         filteredNotes = filteredNotes.sort((a, b) => a.timestamp - b.timestamp);
     } else if (sortOrder === 'content-asc') {
-        filteredNotes = filteredNotes.sort((a, b) => a.content.localeCompare(b.content));
+        filteredNotes = filteredNotes.sort((a, b) => (a.content || '').localeCompare(b.content || ''));
     }
 
     elements.notesList.innerHTML = '';
@@ -1638,9 +1958,9 @@ function renderNotes() {
             audioPlayer.preload = 'metadata';
             
             if (note.audioData) {
-                audioPlayer.src = note.audioData;
+                audioPlayer.src = getAudioSrcUrl(note.id, note.audioData);
             } else if (note.audioDriveId) {
-                audioPlayer.src = `https://docs.google.com/uc?export=download&id=${note.audioDriveId}`;
+                audioPlayer.src = `/api/stream?id=${note.audioDriveId}&token=${encodeURIComponent(googleAccessToken || '')}`;
             }
 
             audioContainer.appendChild(audioInfo);
@@ -1815,6 +2135,7 @@ function openModal(type, data = null) {
             // Keep the note expanded during editing
             expandedNoteIds.add(data.id);
             renderNotes();
+            updateAudioAuthWarnings();
             break;
         case 'TRANSLATE':
             elements.translateModal.classList.add('show', 'top-modal');
@@ -1901,9 +2222,17 @@ function renderTrashModal() {
         deleteBtn.className = 'delete-btn';
         deleteBtn.textContent = 'حذف';
         deleteBtn.onclick = () => {
-            showCustomConfirm('سيتم حذف هذا النص نهائيا', () => {
+            showCustomConfirm('سيتم حذف هذا النص نهائيا', async () => {
+                if (item.audioDriveId && googleAccessToken) {
+                    try {
+                        await deleteAudioFromDrive(googleAccessToken, item.audioDriveId);
+                    } catch (driveErr) {
+                        console.error("Failed to delete from drive:", driveErr);
+                    }
+                }
                 trash = trash.filter(t => t.id !== item.id);
                 saveData();
+                firestoreDeleteTrash(item.id);
                 renderTrashModal();
                 showToast('تم حذف النص نهائيا');
             });
@@ -1999,41 +2328,44 @@ function areTextsClose(str1, str2) {
 
 // Actions
 async function handleSaveNote() {
-    if (!inputText.trim()) return;
+    const trimmedInput = inputText.trim();
+    if (!trimmedInput && !selectedAudioFile) return;
 
-    // Check for exact or close duplicate across all notes
-    const matchedNote = notes.find(n => areTextsClose(n.content, inputText));
-    if (matchedNote) {
-        // Change active board if needed
-        if (activeBoardId !== matchedNote.boardId) {
-            activeBoardId = matchedNote.boardId;
-            renderBoardsNav();
-            updateCurrentBoardBtn();
-        }
-        
-        // Expand the matched note
-        expandedNoteIds.add(matchedNote.id);
-        renderNotes();
-
-        // Clear input field
-        inputText = '';
-        elements.noteInput.value = '';
-        elements.noteInput.style.height = 'auto';
-
-        showToast("⚠️ النص موجود فعلاً!");
-
-        // Scroll to the note
-        setTimeout(() => {
-            const noteEl = document.getElementById('note-' + matchedNote.id);
-            if (noteEl) {
-                noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                noteEl.classList.add('note-highlight');
-                setTimeout(() => {
-                    noteEl.classList.remove('note-highlight');
-                }, 3000);
+    // Check for exact or close duplicate across all notes (only if there is text content)
+    if (trimmedInput) {
+        const matchedNote = notes.find(n => areTextsClose(n.content, trimmedInput));
+        if (matchedNote) {
+            // Change active board if needed
+            if (activeBoardId !== matchedNote.boardId) {
+                activeBoardId = matchedNote.boardId;
+                renderBoardsNav();
+                updateCurrentBoardBtn();
             }
-        }, 120);
-        return;
+            
+            // Expand the matched note
+            expandedNoteIds.add(matchedNote.id);
+            renderNotes();
+
+            // Clear input field
+            inputText = '';
+            elements.noteInput.value = '';
+            elements.noteInput.style.height = 'auto';
+
+            showToast("⚠️ النص موجود فعلاً!");
+
+            // Scroll to the note
+            setTimeout(() => {
+                const noteEl = document.getElementById('note-' + matchedNote.id);
+                if (noteEl) {
+                    noteEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    noteEl.classList.add('note-highlight');
+                    setTimeout(() => {
+                        noteEl.classList.remove('note-highlight');
+                    }, 3000);
+                }
+            }, 120);
+            return;
+        }
     }
 
     const targetBoardId = document.getElementById('publish-board-select')?.value || activeBoardId;
@@ -2041,7 +2373,7 @@ async function handleSaveNote() {
     const newNote = {
         id: crypto.randomUUID(),
         boardId: targetBoardId,
-        content: inputText,
+        content: trimmedInput,
         timestamp: Date.now()
     };
 
@@ -2061,13 +2393,19 @@ async function handleSaveNote() {
                     return; // block note save
                 }
             } else {
-                showToast("⚠️ للرفع إلى Google Drive في هذه اللوحة، يرجى تسجيل الدخول أولاً.");
+                showToast("⚠️ للرفع إلى Google Drive، يرجى النقر على زر 'تجديد الصلاحيات' الظاهر أولاً.");
                 return; // block note save
             }
         } else {
             // User board -> Local IndexedDB
-            newNote.audioData = selectedAudioBase64;
-            newNote.audioName = selectedAudioName;
+            try {
+                newNote.audioData = await readFileAsDataURL(selectedAudioFile);
+                newNote.audioName = selectedAudioName;
+            } catch (err) {
+                console.error("Failed to read local audio file:", err);
+                showToast("❌ فشل قراءة الملف الصوتي.");
+                return;
+            }
         }
     }
 
@@ -2090,6 +2428,10 @@ async function handleSaveNote() {
     
     // Switch to target board immediately on save
     activeBoardId = targetBoardId;
+    const publishBoardSelect = document.getElementById('publish-board-select');
+    if (publishBoardSelect) {
+        publishBoardSelect.value = "";
+    }
     renderNotes();
     renderBoardsNav();
     updateCurrentBoardBtn();
@@ -2104,6 +2446,7 @@ function deleteNote(note) {
     };
     trash = [trashItem, ...trash];
     notes = notes.filter(n => n.id !== note.id);
+    clearAudioSrcCache(note.id);
     saveData();
     firestoreDeleteNote(note.id);
     firestoreWriteTrash(trashItem);
@@ -2114,11 +2457,12 @@ function deleteNote(note) {
 
 function restoreNote(item) {
     const restoredNote = {
-        id: item.id,
-        boardId: activeBoardId,
-        content: item.content,
-        timestamp: item.timestamp
+        ...item,
+        boardId: activeBoardId
     };
+    delete restoredNote.deletedAt;
+    delete restoredNote.originalBoardName;
+    
     notes = [restoredNote, ...notes];
     trash = trash.filter(t => t.id !== item.id);
     saveData();
@@ -2239,6 +2583,7 @@ async function handleEditSave() {
         delete updatedNote.audioData;
         delete updatedNote.audioDriveId;
         delete updatedNote.audioName;
+        clearAudioSrcCache(noteId);
     }
 
     // Apply audio modifications if a new file was uploaded
@@ -2252,20 +2597,28 @@ async function handleEditSave() {
                     updatedNote.audioDriveId = fileId;
                     updatedNote.audioName = editSelectedAudioName;
                     delete updatedNote.audioData;
+                    clearAudioSrcCache(noteId);
                 } catch (driveErr) {
                     console.error("Drive upload failed during edit:", driveErr);
                     showToast("❌ فشل رفع الملف الصوتي إلى Google Drive.");
                     return; // block note save
                 }
             } else {
-                showToast("⚠️ للرفع إلى Google Drive في هذه اللوحة، يرجى تسجيل الدخول أولاً.");
+                showToast("⚠️ للرفع إلى Google Drive، يرجى النقر على زر 'تجديد الصلاحيات' الظاهر أولاً.");
                 return; // block note save
             }
         } else {
             // User board -> Local IndexedDB
-            updatedNote.audioData = editSelectedAudioBase64;
-            updatedNote.audioName = editSelectedAudioName;
-            delete updatedNote.audioDriveId;
+            try {
+                updatedNote.audioData = await readFileAsDataURL(editSelectedAudioFile);
+                updatedNote.audioName = editSelectedAudioName;
+                delete updatedNote.audioDriveId;
+                clearAudioSrcCache(noteId);
+            } catch (err) {
+                console.error("Failed to read local audio file during edit:", err);
+                showToast("❌ فشل قراءة الملف الصوتي.");
+                return;
+            }
         }
     }
 
@@ -2645,6 +2998,7 @@ function initEventListeners() {
 
                 if (selectedAudioNameEl) selectedAudioNameEl.textContent = selectedAudioName;
                 if (selectedAudioContainer) selectedAudioContainer.style.display = 'flex';
+                updateAudioAuthWarnings();
             }
         };
     }
@@ -2656,6 +3010,7 @@ function initEventListeners() {
             selectedAudioName = '';
             if (audioFileInput) audioFileInput.value = '';
             if (selectedAudioContainer) selectedAudioContainer.style.display = 'none';
+            updateAudioAuthWarnings();
         };
     }
 
@@ -2689,6 +3044,7 @@ function initEventListeners() {
                 if (editAudioStatus) editAudioStatus.style.display = 'flex';
                 if (editMicLabel) editMicLabel.textContent = 'استبدال الملف الصوتي';
                 editAudioDeleted = false;
+                updateAudioAuthWarnings();
             }
         };
     }
@@ -2702,6 +3058,33 @@ function initEventListeners() {
             if (editAudioFileInput) editAudioFileInput.value = '';
             if (editAudioStatus) editAudioStatus.style.display = 'none';
             if (editMicLabel) editMicLabel.textContent = 'إضافة ملف صوتي';
+            updateAudioAuthWarnings();
+        };
+    }
+
+    // Renew permissions and board selection events
+    const newNoteRenewBtn = document.getElementById('new-note-renew-auth-btn');
+    if (newNoteRenewBtn) {
+        newNoteRenewBtn.onclick = async () => {
+            await handleLogin();
+            updateAudioAuthWarnings();
+        };
+    }
+
+    const editNoteRenewBtn = document.getElementById('edit-note-renew-auth-btn');
+    if (editNoteRenewBtn) {
+        editNoteRenewBtn.onclick = async () => {
+            await handleLogin();
+            updateAudioAuthWarnings();
+        };
+    }
+
+    const publishBoardSelect = document.getElementById('publish-board-select');
+    if (publishBoardSelect) {
+        const originalOnChange = publishBoardSelect.onchange;
+        publishBoardSelect.onchange = (e) => {
+            if (originalOnChange) originalOnChange(e);
+            updateAudioAuthWarnings();
         };
     }
 
@@ -2788,9 +3171,21 @@ function initEventListeners() {
             showToast('سلة المحذوفات فارغة');
             return;
         }
-        showCustomConfirm('هل أنت متأكد من إفراغ سلة المحذوفات؟ سيتم حذف جميع النصوص نهائياً.', () => {
+        showCustomConfirm('هل أنت متأكد من إفراغ سلة المحذوفات؟ سيتم حذف جميع النصوص نهائياً.', async () => {
+            if (googleAccessToken) {
+                for (const item of trash) {
+                    if (item.audioDriveId) {
+                        try {
+                            await deleteAudioFromDrive(googleAccessToken, item.audioDriveId);
+                        } catch (driveErr) {
+                            console.error("Failed to delete empty trash file from drive:", driveErr);
+                        }
+                    }
+                }
+            }
             trash = [];
             saveData();
+            firestoreClearTrash();
             renderTrashModal();
             showToast('تم إفراغ سلة المحذوفات');
         });
@@ -2968,9 +3363,21 @@ async function init() {
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
+            googleAccessToken = localStorage.getItem('google_access_token') || null;
+            if (googleAccessToken && !googleDriveFileId) {
+                try {
+                    googleDriveFileId = await findBackupFileOnDrive(googleAccessToken);
+                } catch (driveErr) {
+                    console.error("Failed to auto-find backup on drive:", driveErr);
+                }
+            }
             await loadCloudData();
         } else {
             currentUser = null;
+            googleAccessToken = null;
+            googleDriveFileId = null;
+            googleDriveFolderId = null;
+            localStorage.removeItem('google_access_token');
             await loadCloudData();
         }
         updateAuthUI();

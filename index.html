@@ -130,12 +130,6 @@
     <main class="main">
         <!-- Input Area -->
         <form id="note-form" class="input-form" style="display: none;">
-            <div class="publish-header-row" id="publish-header-row">
-                <span class="publish-header-title">تحديد لوحة للنشر</span>
-                <select id="publish-board-select" class="publish-board-select">
-                    <!-- Options populated dynamically -->
-                </select>
-            </div>
             <div class="input-row">
                 <textarea id="note-input" placeholder="اكتب ملاحظة..." rows="1"></textarea>
             </div>
@@ -145,10 +139,22 @@
                 <span id="selected-audio-name" class="selected-audio-name" style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500;"></span>
                 <button type="button" id="remove-selected-audio-btn" class="remove-audio-btn" style="background: none; border: none; color: #ef4444; font-size: 1.2rem; cursor: pointer; padding: 0; line-height: 1;">×</button>
             </div>
-            <div class="input-actions-row" style="display: flex; align-items: center; gap: 0.45rem; margin-top: 10px; width: 100%;">
-                <button type="submit" class="primary-save-btn">حفظ الملاحظة</button>
-                <button type="button" id="mic-upload-btn" class="mic-btn" title="تحميل ملف صوتي">🎤</button>
-                <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
+            <!-- Google Drive auth warning for new note audio -->
+            <div id="new-note-auth-warning" style="display: none; align-items: center; justify-content: space-between; gap: 0.5rem; background-color: #fffbeb; border: 1px solid #fef3c7; padding: 0.4rem 0.8rem; border-radius: 0.5rem; font-size: 0.8rem; color: #b45309; margin-top: 0.25rem; width: 100%;">
+                <span style="display: flex; align-items: center; gap: 0.25rem;">
+                    ⚠️ للرفع إلى Google Drive في هذه اللوحة، يرجى تجديد صلاحيات الوصول أولاً.
+                </span>
+                <button type="button" id="new-note-renew-auth-btn" style="background-color: #d97706; color: white; border: none; padding: 0.25rem 0.6rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; white-space: nowrap;">تجديد الصلاحيات</button>
+            </div>
+            <div class="input-actions-row" style="display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; margin-top: 10px; width: 100%;">
+                <div style="display: flex; align-items: center; gap: 0.45rem;">
+                    <button type="submit" class="primary-save-btn">حفظ الملاحظة</button>
+                    <button type="button" id="mic-upload-btn" class="mic-btn" title="تحميل ملف صوتي">🎤</button>
+                    <input type="file" id="audio-file-input" accept="audio/*" style="display: none;">
+                </div>
+                <select id="publish-board-select" class="publish-board-select">
+                    <!-- Options populated dynamically -->
+                </select>
             </div>
         </form>
 
@@ -279,6 +285,13 @@
                     <span id="edit-audio-name" class="edit-audio-name" style="flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 500;"></span>
                     <button type="button" id="delete-edit-audio-btn" class="delete-audio-btn" title="حذف الملف الصوتي" style="background: none; border: none; color: #ef4444; font-size: 1.1rem; cursor: pointer; padding: 0; display: flex; align-items: center;">🗑️</button>
                 </div>
+                <!-- Google Drive auth warning for edited note audio -->
+                <div id="edit-note-auth-warning" style="display: none; align-items: center; justify-content: space-between; gap: 0.5rem; background-color: #fffbeb; border: 1px solid #fef3c7; padding: 0.4rem 0.8rem; border-radius: 0.5rem; font-size: 0.8rem; color: #b45309; width: 100%;">
+                    <span style="display: flex; align-items: center; gap: 0.25rem;">
+                        ⚠️ للرفع إلى Google Drive في هذه اللوحة، يرجى تجديد صلاحيات الوصول أولاً.
+                    </span>
+                    <button type="button" id="edit-note-renew-auth-btn" style="background-color: #d97706; color: white; border: none; padding: 0.25rem 0.6rem; border-radius: 0.375rem; font-size: 0.75rem; font-weight: 500; cursor: pointer; white-space: nowrap;">تجديد الصلاحيات</button>
+                </div>
                 <div class="edit-audio-actions" style="display: flex; align-items: center; gap: 0.5rem;">
                     <button type="button" id="edit-mic-btn" class="mic-btn" title="إضافة أو استبدال الملف الصوتي">🎤</button>
                     <span id="edit-mic-label" class="edit-mic-label" style="font-size: 12px; color: #4b5563;">إضافة أو استبدال ملف صوتي</span>
@@ -349,6 +362,18 @@
                 <button id="save-edit-translate" class="copy-btn">حفظ التعديل</button>
                 <button id="copy-translated" class="copy-btn">نسخ الترجمة</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Upload Progress Modal -->
+    <div id="upload-progress-modal" class="modal">
+        <div class="modal-content" style="max-width: 22rem; text-align: center; direction: rtl; border: 1px solid #bfdbfe; background-color: #f0fdf4;">
+            <h3 style="margin: 0px 0px 10px 0px; font-weight: bold; font-size: 16px; color: #166534;">🎙️ جاري رفع الملف الصوتي...</h3>
+            <p id="upload-progress-filename" style="margin-bottom: 12px; font-size: 12px; color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"></p>
+            <div style="background-color: #e2e8f0; border-radius: 9999px; height: 10px; width: 100%; overflow: hidden; margin-bottom: 8px; border: 1px solid #cbd5e1;">
+                <div id="upload-progress-bar" style="background-color: #16a34a; width: 0%; height: 100%; transition: width 0.1s ease-out;"></div>
+            </div>
+            <div style="font-size: 16px; font-weight: bold; color: #15803d;" id="upload-progress-text">0%</div>
         </div>
     </div>
 
