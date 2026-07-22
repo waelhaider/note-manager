@@ -17,15 +17,16 @@ async function startServer() {
     const fileId = req.query.id as string;
     const token = req.query.token as string;
 
-    if (!fileId || !token) {
-      res.status(400).send("Missing Google Drive file ID or Access Token");
+    if (!fileId) {
+      res.status(400).send("Missing Google Drive file ID");
       return;
     }
 
     const driveUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-    const headers: Record<string, string> = {
-      "Authorization": `Bearer ${token}`
-    };
+    const headers: Record<string, string> = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
 
     // Forward Range header from client if present to support scrubbing/seeking
     if (req.headers.range) {
