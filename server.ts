@@ -34,9 +34,19 @@ async function startServer() {
     }
 
     try {
-      const driveRes = await fetch(driveUrl, { headers });
+      let driveRes = await fetch(driveUrl, { headers });
 
-      // Handle common authentication or fetch errors
+      // Handle common authentication or fetch errors with public fallback
+      if (!driveRes.ok && (driveRes.status === 401 || driveRes.status === 403 || driveRes.status === 404)) {
+        const fallbackUrl = `https://drive.google.com/uc?export=download&id=${fileId}`;
+        const fallbackRes = await fetch(fallbackUrl, {
+          headers: req.headers.range ? { Range: req.headers.range as string } : {}
+        });
+        if (fallbackRes.ok || fallbackRes.status === 206) {
+          driveRes = fallbackRes;
+        }
+      }
+
       if (!driveRes.ok && driveRes.status !== 206) {
         console.error(`Google Drive API error: ${driveRes.status} ${driveRes.statusText}`);
         res.status(driveRes.status).send(`Google Drive API error: ${driveRes.statusText}`);
