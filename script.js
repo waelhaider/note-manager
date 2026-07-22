@@ -1763,6 +1763,247 @@ function renderBoardsList() {
     });
 }
 
+// Render Custom Audio Player Component
+function renderCustomAudioPlayer(note) {
+    const audioContainer = document.createElement('div');
+    audioContainer.className = 'note-audio-container';
+    audioContainer.onclick = (e) => {
+        e.stopPropagation();
+    };
+
+    const audioInfo = document.createElement('div');
+    audioInfo.className = 'note-audio-info';
+
+    const audioIconObj = document.createElement('span');
+    audioIconObj.className = 'note-audio-icon';
+    audioIconObj.textContent = '🎙️';
+
+    const audioTitleObj = document.createElement('span');
+    audioTitleObj.className = 'note-audio-title';
+    audioTitleObj.textContent = note.audioName || 'ملف صوتي';
+
+    audioInfo.appendChild(audioIconObj);
+    audioInfo.appendChild(audioTitleObj);
+    audioContainer.appendChild(audioInfo);
+
+    const audio = document.createElement('audio');
+    audio.preload = 'metadata';
+    if (note.audioData) {
+        audio.src = getAudioSrcUrl(note.id, note.audioData);
+    } else if (note.audioDriveId) {
+        audio.src = `/api/stream?id=${note.audioDriveId}&token=${encodeURIComponent(googleAccessToken || '')}`;
+    }
+
+    audio.onerror = () => {
+        if (note.audioDriveId && !audio.dataset.triedFallback) {
+            audio.dataset.triedFallback = 'true';
+            audio.src = `https://lh3.googleusercontent.com/d/${note.audioDriveId}`;
+        }
+    };
+
+    const controls = document.createElement('div');
+    controls.className = 'custom-audio-controls';
+
+    const playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'custom-audio-play-btn';
+    playBtn.setAttribute('aria-label', 'تشغيل');
+    playBtn.innerHTML = `<svg viewBox="0 0 24 24" class="play-icon"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
+
+    const timeContainer = document.createElement('div');
+    timeContainer.className = 'custom-audio-time-container';
+
+    const seekbar = document.createElement('input');
+    seekbar.type = 'range';
+    seekbar.className = 'custom-audio-seekbar';
+    seekbar.setAttribute('dir', 'ltr');
+    seekbar.min = '0';
+    seekbar.max = '100';
+    seekbar.value = '0';
+
+    const timeText = document.createElement('div');
+    timeText.className = 'custom-audio-time-text';
+    timeText.setAttribute('dir', 'ltr');
+    timeText.innerHTML = `<span>0:00</span><span>0:00</span>`;
+
+    timeContainer.appendChild(seekbar);
+    timeContainer.appendChild(timeText);
+
+    const volumeWrapper = document.createElement('div');
+    volumeWrapper.className = 'custom-audio-volume-wrapper';
+
+    const volumeBtn = document.createElement('button');
+    volumeBtn.type = 'button';
+    volumeBtn.className = 'custom-audio-volume-btn';
+    volumeBtn.setAttribute('aria-label', 'التحكم بالصوت');
+    volumeBtn.innerHTML = `🔊`;
+
+    const volumePopup = document.createElement('div');
+    volumePopup.className = 'custom-audio-volume-popup';
+
+    const popupIcon = document.createElement('span');
+    popupIcon.className = 'volume-popup-icon';
+    popupIcon.textContent = '🔊';
+
+    const volumeSlider = document.createElement('input');
+    volumeSlider.type = 'range';
+    volumeSlider.className = 'custom-audio-volume-slider';
+    volumeSlider.setAttribute('dir', 'ltr');
+    volumeSlider.min = '0';
+    volumeSlider.max = '1';
+    volumeSlider.step = '0.01';
+    volumeSlider.value = '1';
+
+    const volumeValue = document.createElement('span');
+    volumeValue.className = 'custom-audio-volume-value';
+    volumeValue.textContent = '100%';
+
+    volumePopup.appendChild(popupIcon);
+    volumePopup.appendChild(volumeSlider);
+    volumePopup.appendChild(volumeValue);
+
+    volumeWrapper.appendChild(volumeBtn);
+    volumeWrapper.appendChild(volumePopup);
+
+    controls.appendChild(playBtn);
+    controls.appendChild(timeContainer);
+    controls.appendChild(volumeWrapper);
+
+    audioContainer.appendChild(audio);
+    audioContainer.appendChild(controls);
+
+    function formatTime(seconds) {
+        if (isNaN(seconds) || seconds < 0) return '0:00';
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    }
+
+    playBtn.onclick = (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('audio').forEach(otherAudio => {
+            if (otherAudio !== audio && !otherAudio.paused) {
+                otherAudio.pause();
+            }
+        });
+
+        if (audio.paused) {
+            audio.play().catch(err => console.error("Playback failed:", err));
+        } else {
+            audio.pause();
+        }
+    };
+
+    audio.onplay = () => {
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24" class="pause-icon"><path fill="currentColor" d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+        playBtn.classList.add('playing');
+    };
+
+    audio.onpause = () => {
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24" class="play-icon"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
+        playBtn.classList.remove('playing');
+    };
+
+    audio.onended = () => {
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24" class="play-icon"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>`;
+        playBtn.classList.remove('playing');
+        seekbar.value = '0';
+        if (timeText.children[0]) timeText.children[0].textContent = '0:00';
+    };
+
+    audio.onloadedmetadata = () => {
+        if (timeText.children[1]) timeText.children[1].textContent = formatTime(audio.duration);
+    };
+
+    audio.ontimeupdate = () => {
+        if (audio.duration) {
+            const pct = (audio.currentTime / audio.duration) * 100;
+            seekbar.value = pct;
+            seekbar.style.background = `linear-gradient(to right, #2563eb 0%, #2563eb ${pct}%, #cbd5e1 ${pct}%, #cbd5e1 100%)`;
+            if (timeText.children[0]) timeText.children[0].textContent = formatTime(audio.currentTime);
+            if (timeText.children[1]) timeText.children[1].textContent = formatTime(audio.duration);
+        }
+    };
+
+    seekbar.oninput = (e) => {
+        e.stopPropagation();
+        if (audio.duration) {
+            const seekTo = (parseFloat(seekbar.value) / 100) * audio.duration;
+            audio.currentTime = seekTo;
+            const pct = (seekTo / audio.duration) * 100;
+            seekbar.style.background = `linear-gradient(to right, #2563eb 0%, #2563eb ${pct}%, #cbd5e1 ${pct}%, #cbd5e1 100%)`;
+            if (timeText.children[0]) timeText.children[0].textContent = formatTime(seekTo);
+        }
+    };
+
+    let volumeTimer = null;
+
+    function resetVolumeTimer() {
+        if (volumeTimer) clearTimeout(volumeTimer);
+        volumeTimer = setTimeout(() => {
+            volumePopup.classList.remove('show');
+        }, 2000);
+    }
+
+    function updateVolumeUI(val) {
+        audio.volume = val;
+        audio.muted = (val === 0);
+        const percent = Math.round(val * 100);
+        volumeValue.textContent = percent + '%';
+        volumeSlider.value = val;
+
+        const volPct = val * 100;
+        volumeSlider.style.background = `linear-gradient(to right, #2563eb 0%, #2563eb ${volPct}%, #e2e8f0 ${volPct}%, #e2e8f0 100%)`;
+
+        let icon = '🔊';
+        if (val === 0 || audio.muted) {
+            icon = '🔇';
+        } else if (val < 0.5) {
+            icon = '🔉';
+        }
+        volumeBtn.textContent = icon;
+        popupIcon.textContent = icon;
+    }
+    updateVolumeUI(1);
+
+    volumeBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isOpen = volumePopup.classList.contains('show');
+        document.querySelectorAll('.custom-audio-volume-popup.show').forEach(p => p.classList.remove('show'));
+
+        if (!isOpen) {
+            volumePopup.classList.add('show');
+            resetVolumeTimer();
+        } else {
+            volumePopup.classList.remove('show');
+            if (volumeTimer) clearTimeout(volumeTimer);
+        }
+    };
+
+    const handleVolumeInteraction = (e) => {
+        e.stopPropagation();
+        const val = parseFloat(volumeSlider.value);
+        updateVolumeUI(val);
+        resetVolumeTimer();
+    };
+
+    volumeSlider.oninput = handleVolumeInteraction;
+    volumeSlider.onchange = handleVolumeInteraction;
+    volumeSlider.ontouchstart = handleVolumeInteraction;
+    volumeSlider.ontouchmove = handleVolumeInteraction;
+
+    volumePopup.onclick = (e) => e.stopPropagation();
+
+    document.addEventListener('click', (e) => {
+        if (!volumeWrapper.contains(e.target)) {
+            volumePopup.classList.remove('show');
+            if (volumeTimer) clearTimeout(volumeTimer);
+        }
+    });
+
+    return audioContainer;
+}
+
 // Render notes
 function renderNotes() {
     const currentBoard = boards.find(b => b.id === activeBoardId);
@@ -1931,41 +2172,8 @@ function renderNotes() {
 
         // Render audio player if note has an audio attachment
         if (note.audioData || note.audioDriveId) {
-            const audioContainer = document.createElement('div');
-            audioContainer.className = 'note-audio-container';
-            // Stop propagation to prevent note expansion toggle
-            audioContainer.onclick = (e) => {
-                e.stopPropagation();
-            };
-
-            const audioInfo = document.createElement('div');
-            audioInfo.className = 'note-audio-info';
-
-            const audioIconObj = document.createElement('span');
-            audioIconObj.className = 'note-audio-icon';
-            audioIconObj.textContent = '🎙️';
-
-            const audioTitleObj = document.createElement('span');
-            audioTitleObj.className = 'note-audio-title';
-            audioTitleObj.textContent = note.audioName || 'ملف صوتي';
-
-            audioInfo.appendChild(audioIconObj);
-            audioInfo.appendChild(audioTitleObj);
-
-            const audioPlayer = document.createElement('audio');
-            audioPlayer.controls = true;
-            audioPlayer.className = 'note-audio-player';
-            audioPlayer.preload = 'metadata';
-            
-            if (note.audioData) {
-                audioPlayer.src = getAudioSrcUrl(note.id, note.audioData);
-            } else if (note.audioDriveId) {
-                audioPlayer.src = `/api/stream?id=${note.audioDriveId}&token=${encodeURIComponent(googleAccessToken || '')}`;
-            }
-
-            audioContainer.appendChild(audioInfo);
-            audioContainer.appendChild(audioPlayer);
-            content.appendChild(audioContainer);
+            const customAudioPlayer = renderCustomAudioPlayer(note);
+            content.appendChild(customAudioPlayer);
         }
 
         const actions = document.createElement('div');
